@@ -1,0 +1,29 @@
+[project]
+name = "pdt-meltano"
+version = "0.1.0"
+description = "Deploy a Meltano project to AWS Batch, Azure Container Apps Jobs, or Google Cloud Run with pdt."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "meltano.edk>=0.6,<0.7",
+    "typer>=0.12",
+    "pdt-cli>=0.1.2",
+    "pyyaml",
+    "python-dotenv",
+]
+
+[project.urls]
+Homepage = "https://www.autoidm.com/"
+Source = "https://github.com/AutoIDM/pdt-meltano"
+pdt = "https://github.com/AutoIDM/pdt"
+
+[project.scripts]
+pdt_meltano = "pdt_meltano.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest"]
