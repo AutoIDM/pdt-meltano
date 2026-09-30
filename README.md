@@ -33,7 +33,7 @@ pdt-meltano deploys job schedules only, so you need a job and a schedule for it.
 
 ```
 meltano job add github-to-postgres --tasks "tap-github target-postgres"
-meltano schedule add daily-sync --job github-to-postgres --interval '@daily'
+meltano schedule add meltano-daily-sync --job github-to-postgres --interval '@daily'
 ```
 
 Then deploy:
@@ -91,9 +91,36 @@ If you remove a schedule that is still deployed, its cloud job keeps running. pd
 
 ## Working with your team
 
-pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
+pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `meltano-daily-sync` from your own copy, you both update the same job.
 
 Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
+
+## Install from a clone
+
+To use your own copy of this repo in a Meltano project, add it to `meltano.yml` with an editable `pip_url`:
+
+```yaml
+plugins:
+  utilities:
+  - name: pdt-aws
+    namespace: pdt_aws
+    pip_url: -e /path/to/pdt-meltano
+    executable: pdt_meltano
+```
+
+Then install it:
+
+```
+meltano install utility pdt-aws
+```
+
+For another cloud, use `pdt-azure` or `pdt-gcloud`, and copy the `settings` from the matching file in `hub/`.
+
+To run `pdt_meltano` outside of Meltano, install it with uv, then run it from inside a Meltano project:
+
+```
+uv tool install -e /path/to/pdt-meltano
+```
 
 ## License
 
