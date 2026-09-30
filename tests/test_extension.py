@@ -158,15 +158,20 @@ def test_help_comes_from_pdt(monkeypatch):
     sent = []
     monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
     monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: sent.append(args) or 0)
-    for argv in (["--help"], ["-h"], ["deploy", "--help"], ["runs", "daily-sync", "-h"], ["--version"]):
+    for argv in (["--help"], ["-h"], ["runs", "daily-sync", "-h"], ["--version"]):
         monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
         with pytest.raises(SystemExit):
             main.main()
-    assert sent == [("--help",), ("-h",), ("deploy", "--help"), ("runs", "daily-sync", "-h"), ("--version",)]
-    monkeypatch.setattr(sys, "argv", ["pdt_meltano", "describe", "--help"])
-    with pytest.raises(SystemExit):
-        main.main()
-    assert len(sent) == 5
+    assert sent == [("--help",), ("-h",), ("runs", "daily-sync", "-h"), ("--version",)]
+
+
+def test_help_for_our_commands_is_ours(monkeypatch, capsys):
+    monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: pytest.fail("sent to pdt"))
+    for argv in (["deploy", "--help"], ["destroy", "-h"], ["describe", "--help"]):
+        monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
+        with pytest.raises(SystemExit):
+            main.main()
+        assert "Usage:" in capsys.readouterr().out
 
 
 def test_pdt_stderr_goes_to_the_terminal_that_stdout_goes_to(meltano_project, monkeypatch):

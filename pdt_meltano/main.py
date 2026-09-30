@@ -12,6 +12,7 @@ from meltano.edk.extension import DescribeFormat
 from pdt_meltano.extension import Pdt, PdtMeltanoError, log
 
 app = typer.Typer(name="pdt_meltano", pretty_exceptions_enable=False, no_args_is_help=True,
+                  context_settings={"help_option_names": ["-h", "--help"]},
                   epilog="Any other command, such as list, validate, or run, goes to pdt.")
 YES = typer.Option(False, "--yes", help="skip the confirmation prompt")
 
@@ -49,13 +50,12 @@ def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
 
 def main() -> None:
     """Send any command that is not one of ours, and any request for help or
-    the version, to pdt, and name the command in usage and error text as the
-    user typed it: `meltano invoke pdt-aws`."""
+    the version that is not about one of ours, to pdt, and name the command in
+    usage and error text as the user typed it: `meltano invoke pdt-aws`."""
     args = sys.argv[1:]
-    if args[:1] == ["--version"] or (
-            {"-h", "--help"} & set(args) and args[0] not in ("describe", "initialize")):
-        sys.exit(Pdt().pdt(*args))
     own = {command.name or command.callback.__name__ for command in app.registered_commands}
+    if args[:1] == ["--version"] or ({"-h", "--help"} & set(args) and args[0] not in own):
+        sys.exit(Pdt().pdt(*args))
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in own:
         try:
             Pdt().invoke(*sys.argv[1:])
