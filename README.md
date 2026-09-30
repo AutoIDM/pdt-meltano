@@ -1,10 +1,10 @@
 # pdt-meltano
 
-pdt-meltano is a Meltano utility that runs your Meltano job schedules in your own cloud account. Each job schedule in `meltano.yml` becomes a scheduled container job, and you manage it by its schedule name. [AutoIDM](https://www.autoidm.com/) makes pdt-meltano and [pdt](https://github.com/AutoIDM/pdt), the tool that does the cloud work.
+pdt-meltano is a Meltano utility that wraps `pdt`. It runs your Meltano job schedules in your own cloud account. Each job schedule in `meltano.yml` becomes a scheduled container job. [AutoIDM](https://www.autoidm.com/) makes pdt-meltano and [pdt](https://github.com/AutoIDM/pdt).
 
 ## Why use pdt-meltano
 
-Because it's alarmingly easy and lightweight. Deploy to your existing infrastructure right from your meltano project, you own everything. Nothing extra to set up: no SAAS / PAAS, no subscription fees, no daemon. Works with your existing project and plays nicely with AI tools.
+Because it's alarmingly easy and lightweight. Deploy to your existing infrastructure right from your meltano project. You own everything and there's nothing extra to set up: no SAAS / PAAS, no subscription fees, no daemon. Works with your existing project and plays nicely with AI tools.
 
 ## Pick your cloud
 
@@ -51,36 +51,36 @@ A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltan
 Commands take schedule names, the same names that `meltano schedule list` shows. For `deploy` and `destroy`, the schedule names are optional; leave them out to act on every schedule.
 
 
-| Command                                | What it does                                         |
-| -------------------------------------- | ---------------------------------------------------- |
-| `deploy [<schedule-name>...] [--yes]`  | deploy each schedule, or only the ones you name      |
-| `destroy [<schedule-name>...] [--yes]` | remove everything that deploy made in the cloud      |
+| Command                                | What it does                                            |
+| -------------------------------------- | ------------------------------------------------------- |
+| `deploy [<schedule-name>...] [--yes]`  | deploy each schedule, or only the ones you name         |
+| `destroy [<schedule-name>...] [--yes]` | remove everything that deploy made in the cloud         |
 | `<pdt-command>...`                     | run any other pdt command, such as `list` or `validate` |
-| `describe [--format text|json|yaml]`   | list the commands of pdt-meltano                     |
-| `initialize`                           | does nothing, because deploy writes what it needs    |
+| `--help`                               | list all pdt commands                                   |
+| `describe [--format text|json|yaml]`   | list the commands of pdt-meltano                        |
+| `initialize`                           | does nothing, because deploy writes what it needs       |
 
 
-`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The Meltano Extension Developer Kit (EDK) requires `describe` and `initialize` in every utility that it builds, and Meltano runs them for itself, so you do not need them.
+`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud.
 
 ## Config
 
-pdt-meltano writes a pdt project into `.meltano/run/pdt/` each time you run a command, and `pdt.yml` in that folder holds the settings for every schedule. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name, and pdt checks it. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
+pdt-meltano writes a pdt project into `.meltano/run/pdt/` each time you run a command. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
 
-These are the settings that pdt reads. A setting for a different cloud does nothing, and pdt rejects any other name, for example a misspelled `regoin`:
+These are the settings that pdt reads:
 
-| Setting          | Cloud          | What it sets                                                              |
-| ---------------- | -------------- | ------------------------------------------------------------------------- |
-| `provider`       | all            | the cloud; the Hub entry sets it, so do not change it                     |
-| `region`         | all            | where the jobs run                                                        |
-| `timezone`       | all            | the time zone of the schedule intervals; Azure accepts only `Etc/UTC`     |
-| `account`        | AWS            | the AWS account; pdt adds it on your first deploy                         |
-| `profile`        | AWS            | the profile in `~/.aws` to use; pdt adds it if it has to ask you          |
-| `subscription`   | Azure          | the Azure subscription; pdt adds it on your first deploy                  |
-| `resource_group` | Azure          | the resource group for the jobs                                           |
-| `environment`    | Azure          | a Container Apps environment you already have, as `<resource-group>/<name>` |
-| `project`        | Google Cloud   | the Google Cloud project; pdt adds it on your first deploy                |
 
-pdt-meltano keeps `account`, `profile`, `subscription`, and `project` in `pdt.yml` after pdt adds them. Every other key comes from your settings each time. pdt checks the setting names and the format of `account` and `environment`, but not the values of `region` or `timezone`, so a wrong region fails only when you deploy.
+| Setting          | Cloud        | What it sets                                                                |
+| ---------------- | ------------ | --------------------------------------------------------------------------- |
+| `provider`       | all          | the cloud; the Hub entry sets it, so do not change it                       |
+| `region`         | all          | where the jobs run                                                          |
+| `timezone`       | all          | the time zone of the schedule intervals; Azure accepts only `Etc/UTC`       |
+| `account`        | AWS          | the AWS account; pdt adds it on your first deploy                           |
+| `profile`        | AWS          | the profile in `~/.aws` to use; pdt adds it if it has to ask you            |
+| `subscription`   | Azure        | the Azure subscription; pdt adds it on your first deploy                    |
+| `resource_group` | Azure        | the resource group for the jobs                                             |
+| `environment`    | Azure        | a Container Apps environment you already have, as `<resource-group>/<name>` |
+| `project`        | Google Cloud | the Google Cloud project; pdt adds it on your first deploy                  |
 
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
