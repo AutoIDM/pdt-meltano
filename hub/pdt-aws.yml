@@ -28,12 +28,10 @@ pip_url: pdt-meltano
 repo: https://github.com/AutoIDM/pdt
 settings:
 - description: The pdt provider this entry deploys to. Leave it as it is; each Hub entry sets its own.
-  env: PDT_MELTANO_PROVIDER
   label: Provider
   name: provider
   value: aws
 - description: Which AWS region should hold your jobs?
-  env: PDT_MELTANO_REGION
   label: Region
   name: region
   value: us-east-1

@@ -1,7 +1,9 @@
+import sys
+
 import pytest
 import yaml
 
-from pdt_meltano import extension
+from pdt_meltano import extension, main
 from pdt_meltano.extension import Pdt, PdtMeltanoError, Schedule, app_name, parse_schedules
 
 LISTING = {"schedules": {
@@ -35,8 +37,9 @@ def meltano_project(tmp_path, monkeypatch):
     (root / ".env").write_text("TAP_SECRET=abc\nTARGET_PASSWORD=def\n")
     (root / ".meltano" / "plugins").mkdir(parents=True)
     monkeypatch.setenv("MELTANO_PROJECT_ROOT", str(root))
-    monkeypatch.setenv("PDT_MELTANO_PROVIDER", "aws")
-    monkeypatch.setenv("PDT_MELTANO_REGION", "us-east-2")
+    monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", "pdt_aws")
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "aws")
+    monkeypatch.setenv("PDT_AWS_REGION", "us-east-2")
 
     def fake_meltano(*args, cwd):
         return "meltano, version 4.2.0\n" if args == ("--version",) else ""
@@ -67,14 +70,24 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
 def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
     ext = Pdt()
     ext.stage.mkdir(parents=True)
-    (ext.stage / "pdt.yml").write_text('platform:\n  provider: aws\n  account: "123456789012"\n')
+    (ext.stage / "pdt.yml").write_text(
+        'platform:\n  provider: aws\n  account: "123456789012"\n  timezone: Etc/UTC\n')
     ext.write_project([])
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"] == {
-        "provider": "aws", "account": "123456789012", "region": "us-east-2"}
+        "account": "123456789012", "provider": "aws", "region": "us-east-2"}
+
+
+def test_every_setting_goes_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
+    monkeypatch.setenv("PDT_AWS_TIMEZONE", "America/Chicago")
+    monkeypatch.setenv("PDT_AWS_BUGABOO", "abcdef")
+    ext = Pdt()
+    ext.write_project([])
+    assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"] == {
+        "provider": "aws", "region": "us-east-2", "timezone": "America/Chicago", "bugaboo": "abcdef"}
 
 
 def test_a_missing_provider_names_the_fix(meltano_project, monkeypatch):
-    monkeypatch.setenv("PDT_MELTANO_PROVIDER", "")
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "")
     with pytest.raises(PdtMeltanoError, match="Meltano Hub entry"):
         Pdt().write_project([])
 
@@ -110,3 +123,13 @@ def test_only_deploy_leaves_out_a_removed_schedule_that_is_still_deployed(meltan
     assert ext.each("destroy", ["hourly"]) == 0
     with pytest.raises(PdtMeltanoError, match="no job schedule named hourly"):
         ext.each("deploy", ["hourly"])
+
+
+def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
+    sent = []
+    monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
+    monkeypatch.setattr(main.Pdt, "invoke", lambda self, *args: sent.append(args) or sys.exit(0))
+    monkeypatch.setattr(sys, "argv", ["pdt_meltano", "list", "--names"])
+    with pytest.raises(SystemExit):
+        main.main()
+    assert sent == [("list", "--names")]

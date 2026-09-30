@@ -13,8 +13,9 @@ Meltano system database, which holds each extractor's state, in the
 app's pdt storage folder: it pulls the database before the run and
 pushes it after, under pdt's storage lock.
 
-The provider comes from the Meltano Hub entry the user added (a default
-setting value), and the region is the one setting the user chooses.
+Every setting of the plugin goes under platform: in pdt.yml, so pdt
+checks it. The provider comes from the Meltano Hub entry the user added (a
+default setting value); the user sets the others with `meltano config`.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ from meltano.edk.extension import ExtensionBase
 PROVIDERS = ("aws", "azure", "google-cloud")
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
             "output", ".pdt", ".pdt-state")
+# pdt saves these into pdt.yml on the first deploy.
+WRITTEN_BACK = ("account", "profile", "project", "subscription")
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -129,14 +132,16 @@ class Pdt(ExtensionBase):
     def __init__(self) -> None:
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
         self.stage = self.root / ".meltano" / "run" / "pdt"
-        self.provider = os.environ.get("PDT_MELTANO_PROVIDER", "").strip()
-        self.region = os.environ.get("PDT_MELTANO_REGION", "").strip()
+        prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
+        self.settings = {key[len(prefix):].lower(): value.strip()
+                         for key, value in os.environ.items()
+                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""}
+        self.provider = self.settings.get("provider", "")
 
     def describe(self) -> models.Describe:
         return models.Describe(commands=[models.ExtensionCommand(
             name="pdt_meltano", description="deploy Meltano schedules with pdt",
-            commands=["deploy", "destroy", "runs", "logs", "health", "invoke", "describe",
-                      "initialize"])])
+            commands=["deploy", "destroy", "describe", "initialize"])])
 
     def schedules(self) -> list[Schedule]:
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))
@@ -166,12 +171,11 @@ class Pdt(ExtensionBase):
         platform = (existing or {}).get("platform") or {}
         if platform.get("provider") != self.provider:
             platform = {}
-        platform["provider"] = self.provider
-        if self.region != "":
-            platform["region"] = self.region
+        platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
+                    **self.settings}
         project_file.write_text(
-            "# Written by pdt-meltano from the Meltano project. Changes here are kept only\n"
-            "# for keys pdt writes back, such as the cloud account.\n"
+            "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
+            "# are kept only for keys pdt writes back, such as the cloud account.\n"
             + yaml.safe_dump({"platform": platform}, sort_keys=False))
         env_names = sorted(dotenv_values(self.root / ".env")) if (self.root / ".env").is_file() else []
         versions = {"pdt": importlib.metadata.version("pdt-cli"),

@@ -11,7 +11,8 @@ from meltano.edk.extension import DescribeFormat
 
 from pdt_meltano.extension import Pdt, PdtMeltanoError
 
-app = typer.Typer(name="pdt_meltano", pretty_exceptions_enable=False, no_args_is_help=True)
+app = typer.Typer(name="pdt_meltano", pretty_exceptions_enable=False, no_args_is_help=True,
+                  epilog="Any other command, such as list, validate, or run, goes to pdt.")
 YES = typer.Option(False, "--yes", help="skip the confirmation prompt")
 
 
@@ -36,34 +37,6 @@ def destroy(schedules: Optional[List[str]] = typer.Argument(None), yes: bool = Y
 
 
 @app.command()
-def runs(schedule: str) -> None:
-    """List the recent runs of one deployed schedule."""
-    run("runs", [schedule])
-
-
-@app.command()
-def logs(schedule: str, number: int = typer.Argument(1)) -> None:
-    """Read the log of one run of a deployed schedule (1 is the newest)."""
-    run("logs", [schedule], str(number))
-
-
-@app.command()
-def health() -> None:
-    """Show whether the last run of each deployed schedule succeeded."""
-    run("health", [])
-
-
-@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def invoke(ctx: typer.Context) -> None:
-    """Run any pdt command on the project pdt-meltano writes, for example `invoke list`."""
-    try:
-        Pdt().invoke(*(ctx.args[:1] or [None]), *ctx.args[1:])
-    except PdtMeltanoError as e:
-        typer.echo(f"error: {e}", err=True)
-        sys.exit(1)
-
-
-@app.command()
 def describe(output_format: DescribeFormat = typer.Option(DescribeFormat.text, "--format")) -> None:
     """Describe the commands of this extension."""
     typer.echo(Pdt().describe_formatted(output_format))
@@ -75,6 +48,14 @@ def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
 
 
 def main() -> None:
-    """Name the command in usage and error text as the user typed it: `meltano invoke pdt-aws`."""
+    """Send any command that is not one of ours to pdt, and name the command in
+    usage and error text as the user typed it: `meltano invoke pdt-aws`."""
+    own = {command.name or command.callback.__name__ for command in app.registered_commands}
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in own:
+        try:
+            Pdt().invoke(*sys.argv[1:])
+        except PdtMeltanoError as e:
+            typer.echo(f"error: {e}", err=True)
+            sys.exit(1)
     name = os.environ.get("MELTANO_UTILITY_NAME")
     app(prog_name=f"meltano invoke {name}" if name else "pdt_meltano")
