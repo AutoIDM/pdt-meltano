@@ -204,8 +204,11 @@ class Pdt(ExtensionBase):
             if folder.name in names or not (folder / "run.py").is_file():
                 continue
             if folder.name in deployed:
-                print(f"pdt-meltano: {folder.name} is deployed but is no longer a job schedule "
-                      f"in meltano.yml. Run `destroy {folder.name}` to remove it.", file=sys.stderr)
+                environment = f" --environment={self.environment}" if self.environment else ""
+                print(f"warning: {folder.name} is deployed but is no longer a job schedule in "
+                      f"meltano.yml. Run `meltano{environment} invoke "
+                      f"{os.environ['MELTANO_UTILITY_NAME']} destroy {folder.name}` to remove it.",
+                      file=sys.stderr)
             else:
                 shutil.rmtree(folder)
         return names

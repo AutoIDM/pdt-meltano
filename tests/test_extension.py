@@ -106,13 +106,16 @@ def test_a_missing_provider_names_the_fix(meltano_project, monkeypatch):
         Pdt().write_project([])
 
 
-def test_write_project_follows_meltano_yml(meltano_project):
+def test_write_project_follows_meltano_yml(meltano_project, capsys):
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"]), Schedule("hourly", "hourly", ["sync"])])
     (ext.stage / ".pdt").mkdir()
     (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly"]}')
     assert ext.write_project([Schedule("weekly", "weekly", ["sync"])]) == ["weekly"]
     assert sorted(run_py.parent.name for run_py in ext.stage.glob("*/run.py")) == ["hourly", "weekly"]
+    assert capsys.readouterr().err == (
+        "warning: hourly is deployed but is no longer a job schedule in meltano.yml. Run "
+        "`meltano --environment=prod invoke pdt-aws destroy hourly` to remove it.\n")
 
 
 def test_each_takes_schedule_names(meltano_project, monkeypatch):
