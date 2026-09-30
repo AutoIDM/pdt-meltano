@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import List, Optional
 
@@ -71,3 +72,9 @@ def describe(output_format: DescribeFormat = typer.Option(DescribeFormat.text, "
 @app.command()
 def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
     """Nothing to set up; deploy writes what it needs."""
+
+
+def main() -> None:
+    """Name the command in usage and error text as the user typed it: `meltano invoke pdt-aws`."""
+    name = os.environ.get("MELTANO_UTILITY_NAME")
+    app(prog_name=f"meltano invoke {name}" if name else "pdt_meltano")

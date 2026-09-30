@@ -121,8 +121,8 @@ def parse_schedules(listing: dict) -> tuple[list[Schedule], list[str]]:
     return found, skipped
 
 
-def app_name(project: str, schedule: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", f"{project}-{schedule}".lower()).strip("-")
+def app_name(schedule: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", schedule.lower()).strip("-")
 
 
 class Pdt(ExtensionBase):
@@ -138,21 +138,23 @@ class Pdt(ExtensionBase):
             commands=["deploy", "destroy", "runs", "logs", "health", "invoke", "describe",
                       "initialize"])])
 
-    def schedules(self, names: list[str]) -> list[Schedule]:
+    def schedules(self) -> list[Schedule]:
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))
         found, skipped = parse_schedules(listing)
-        known = {schedule.name for schedule in found}
-        unknown = [name for name in names if name not in known]
-        if unknown:
-            raise PdtMeltanoError(
-                f"no job schedule named {', '.join(unknown)}. This project has: "
-                f"{', '.join(sorted(known)) or 'none'}. Add one with `meltano schedule add`.")
         for reason in skipped:
             print(f"pdt-meltano: left out {reason}", file=sys.stderr)
-        return [schedule for schedule in found if not names or schedule.name in names]
+        return found
+
+    def deployed(self) -> set[str]:
+        state = self.stage / ".pdt" / "state"
+        return set(json.loads(state.read_text()).get("deployed") or []) if state.is_file() else set()
 
     def write_project(self, schedules: list[Schedule]) -> list[str]:
-        """Write the pdt project for these schedules and return their app names."""
+        """Write the pdt project for these schedules and return their app names.
+
+        An app folder whose schedule is gone is removed, unless it is still
+        deployed: destroy needs the folder to find what to remove.
+        """
         if self.provider not in PROVIDERS:
             raise PdtMeltanoError(
                 f"the provider setting is {self.provider!r}; it must be one of "
@@ -176,7 +178,7 @@ class Pdt(ExtensionBase):
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
         names = []
         for schedule in schedules:
-            name = app_name(self.root.name, schedule.name)
+            name = app_name(schedule.name)
             folder = self.stage / name
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*LEFT_OUT),
@@ -187,6 +189,15 @@ class Pdt(ExtensionBase):
             (folder / "config.yml").write_text(yaml.safe_dump(
                 {"schedule": schedule.cron, "env": {"optional": env_names}}, sort_keys=False))
             names.append(name)
+        deployed = self.deployed()
+        for folder in self.stage.iterdir():
+            if folder.name in names or not (folder / "run.py").is_file():
+                continue
+            if folder.name in deployed:
+                print(f"pdt-meltano: {folder.name} is deployed but is no longer a job schedule "
+                      f"in meltano.yml. Run `destroy {folder.name}` to remove it.", file=sys.stderr)
+            else:
+                shutil.rmtree(folder)
         return names
 
     def pdt(self, *args: str) -> int:
@@ -196,7 +207,20 @@ class Pdt(ExtensionBase):
         return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env).returncode
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
-        apps = self.write_project(self.schedules(names))
+        """Run a pdt command on the named schedules, or on every one.
+
+        Only deploy is limited to the schedules in meltano.yml; the other
+        commands also reach a removed schedule that is still deployed.
+        """
+        current = self.write_project(self.schedules())
+        known = current if command == "deploy" else sorted(
+            run_py.parent.name for run_py in self.stage.glob("*/run.py"))
+        unknown = [name for name in names if app_name(name) not in known]
+        if unknown:
+            raise PdtMeltanoError(
+                f"no job schedule named {', '.join(unknown)}. This project has: "
+                f"{', '.join(known) or 'none'}. Add one with `meltano schedule add`.")
+        apps = [app_name(name) for name in names] or known
         if not apps:
             raise PdtMeltanoError("this project has no job schedule with a repeating interval. "
                                   "Add one with `meltano schedule add`.")
@@ -204,5 +228,5 @@ class Pdt(ExtensionBase):
         return max(codes)
 
     def invoke(self, command_name: str | None, *command_args: str) -> None:
-        self.write_project(self.schedules([]))
+        self.write_project(self.schedules())
         sys.exit(self.pdt(*([command_name] if command_name else []), *command_args))
