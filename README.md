@@ -83,11 +83,21 @@ These are the settings that pdt reads:
 | `project`        | Google Cloud | the Google Cloud project; pdt adds it on your first deploy                  |
 
 
-Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
+Secrets come only from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule). A variable that is set only in your shell, in CI, or by a secrets manager does not get to the cloud job, although `meltano run` on your computer can see it. Put every value that the job needs in `.env` before you deploy.
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
 If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
+
+## Meltano environments
+
+The cloud job runs in the Meltano environment that is active when you deploy. That is `default_environment` from `meltano.yml`, unless you choose another one:
+
+```
+meltano --environment prod invoke pdt-aws deploy
+```
+
+`meltano run` needs an environment, so `deploy` stops if none is active. Each schedule has one cloud job, so the last deploy decides the environment. If you deploy `daily-sync` with `prod` and then with `dev`, the job runs `dev`.
 
 ## Working with a team
 

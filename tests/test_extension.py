@@ -40,6 +40,7 @@ def meltano_project(tmp_path, monkeypatch):
     monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", "pdt_aws")
     monkeypatch.setenv("PDT_AWS_PROVIDER", "aws")
     monkeypatch.setenv("PDT_AWS_REGION", "us-east-2")
+    monkeypatch.setenv("MELTANO_ENVIRONMENT", "prod")
 
     def fake_meltano(*args, cwd):
         return "meltano, version 4.2.0\n" if args == ("--version",) else ""
@@ -61,6 +62,7 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     run_py = (app / "run.py").read_text()
     assert '"pdt-cli[apps]==' in run_py and '"meltano==4.2.0"' in run_py
     assert "JOB = ['sync']" in run_py
+    assert "ENVIRONMENT = 'prod'" in run_py
     compile(run_py, "run.py", "exec")
     assert "WORKDIR /workspace/daily-sync" in (app / "Dockerfile").read_text()
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
@@ -133,3 +135,9 @@ def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
     with pytest.raises(SystemExit):
         main.main()
     assert sent == [("list", "--names")]
+
+
+def test_deploy_needs_an_environment(meltano_project, monkeypatch):
+    monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
+    with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):
+        Pdt().each("deploy", [])

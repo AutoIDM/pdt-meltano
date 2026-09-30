@@ -60,17 +60,19 @@ from pdt.utils import storage
 
 SCHEDULE = {schedule!r}
 JOB = {job!r}
+ENVIRONMENT = {environment!r}
 
 
 def main() -> int:
     if sys.argv[1:] == ["install"]:
-        return subprocess.run(["meltano", "install", "--schedule", SCHEDULE]).returncode
+        return subprocess.run(
+            ["meltano", "--environment", ENVIRONMENT, "install", "--schedule", SCHEDULE]).returncode
     load_env_json()
     store = storage.store()
     state = Path(".pdt-state").resolve()
     lease = store.pull("state/", state)
     env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{state / 'meltano.db'}}")
-    code = subprocess.run(["meltano", "run", *JOB], env=env).returncode
+    code = subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
     store.push(state, "state/", lease)
     return code
 
@@ -137,6 +139,7 @@ class Pdt(ExtensionBase):
                          for key, value in os.environ.items()
                          if prefix != "_" and key.startswith(prefix) and value.strip() != ""}
         self.provider = self.settings.get("provider", "")
+        self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 
     def describe(self) -> models.Describe:
         return models.Describe(commands=[models.ExtensionCommand(
@@ -187,8 +190,8 @@ class Pdt(ExtensionBase):
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*LEFT_OUT),
                             symlinks=True)
-            (folder / "run.py").write_text(
-                RUN_PY.format(schedule=schedule.name, job=schedule.job, **versions))
+            (folder / "run.py").write_text(RUN_PY.format(
+                schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
             (folder / "config.yml").write_text(yaml.safe_dump(
                 {"schedule": schedule.cron, "env": {"optional": env_names}}, sort_keys=False))
@@ -216,6 +219,10 @@ class Pdt(ExtensionBase):
         Only deploy is limited to the schedules in meltano.yml; the other
         commands also reach a removed schedule that is still deployed.
         """
+        if command == "deploy" and self.environment == "":
+            raise PdtMeltanoError(
+                "no Meltano environment is active, and `meltano run` needs one. Set "
+                "`default_environment` in meltano.yml, or deploy with `meltano --environment <name>`.")
         current = self.write_project(self.schedules())
         known = current if command == "deploy" else sorted(
             run_py.parent.name for run_py in self.stage.glob("*/run.py"))
