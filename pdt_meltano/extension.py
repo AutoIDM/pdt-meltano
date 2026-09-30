@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 from dotenv import dotenv_values
 from meltano.edk import models
-from meltano.edk.extension import ExtensionBase
+from meltano.edk.extension import DescribeFormat, ExtensionBase
 
 # The provider setting of each Hub entry, and the pdt provider it names.
 PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
@@ -168,6 +168,12 @@ class Pdt(ExtensionBase):
         return models.Describe(commands=[models.ExtensionCommand(
             name="pdt_meltano", description="deploy Meltano schedules with pdt",
             commands=["deploy", "destroy", "describe", "initialize"])])
+
+    def describe_formatted(self, output_format: DescribeFormat = DescribeFormat.text) -> str:
+        # The EDK prints text with devtools, which shows no fields of the EDK's slots dataclasses.
+        if output_format == DescribeFormat.text:
+            output_format = DescribeFormat.yaml
+        return super().describe_formatted(output_format)
 
     def schedules(self) -> list[Schedule]:
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))

@@ -192,6 +192,10 @@ def test_log_writes_a_level_meltano_reads(monkeypatch, capsys):
     assert {"pid", "ts", "thread_name", "app_name", "stream_name"} <= set(line)
 
 
+def test_describe_text_names_the_commands(meltano_project):
+    assert "- deploy" in Pdt().describe_formatted()
+
+
 def test_deploy_needs_an_environment(meltano_project, monkeypatch):
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
     with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):
