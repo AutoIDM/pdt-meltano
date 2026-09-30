@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -99,6 +100,23 @@ class PdtMeltanoError(Exception):
     pass
 
 
+def log(level: str, message: str) -> None:
+    """Write a message on stderr at `level`: warning, error, or info.
+
+    Meltano logs each stderr line of a utility at info, unless the plugin sets
+    the structured-logging capability and a _log_parser, as each Hub entry
+    does. Then Meltano reads a Singer SDK JSON line at the level it names.
+    """
+    namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
+    if namespace and os.environ.get(f"{namespace}__LOG_PARSER") == "singer-sdk":
+        message = json.dumps({"level": level, "pid": os.getpid(), "logger_name": "pdt-meltano",
+                              "ts": time.time(), "thread_name": "main", "app_name": "pdt-meltano",
+                              "stream_name": None, "message": message})
+    else:
+        message = f"{level}: {message}"
+    print(message, file=sys.stderr, flush=True)
+
+
 @dataclasses.dataclass(frozen=True)
 class Schedule:
     name: str
@@ -141,7 +159,8 @@ class Pdt(ExtensionBase):
         prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
         self.settings = {key[len(prefix):].lower(): value.strip()
                          for key, value in os.environ.items()
-                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""}
+                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""
+                         and not key[len(prefix):].startswith("_")}
         self.provider = self.settings.get("provider", "")
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 
@@ -154,7 +173,7 @@ class Pdt(ExtensionBase):
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))
         found, skipped = parse_schedules(listing)
         for reason in skipped:
-            print(f"pdt-meltano: left out {reason}", file=sys.stderr)
+            log("info", f"left out {reason}")
         return found
 
     def deployed(self) -> set[str]:
@@ -207,10 +226,9 @@ class Pdt(ExtensionBase):
                 continue
             if folder.name in deployed:
                 environment = f" --environment={self.environment}" if self.environment else ""
-                print(f"warning: {folder.name} is deployed but is no longer a job schedule in "
-                      f"meltano.yml. Run `meltano{environment} invoke "
-                      f"{os.environ['MELTANO_UTILITY_NAME']} destroy {folder.name}` to remove it.",
-                      file=sys.stderr)
+                log("warning", f"{folder.name} is deployed but is no longer a job schedule in "
+                    f"meltano.yml. Run `meltano{environment} invoke "
+                    f"{os.environ['MELTANO_UTILITY_NAME']} destroy {folder.name}` to remove it.")
             else:
                 shutil.rmtree(folder)
         return names
@@ -219,7 +237,11 @@ class Pdt(ExtensionBase):
         env = {**os.environ, **{key: value for key, value in dotenv_values(self.root / ".env").items()
                                 if value is not None and key not in os.environ},
                "PDT_PROJECT": str(self.stage)}
-        return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env).returncode
+        # Meltano shows a utility's stderr one line at a time, so a prompt with no
+        # newline would not show. pdt's stderr goes to the terminal instead.
+        stderr = sys.stdout if sys.stdout.isatty() else None
+        return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env,
+                              stderr=stderr).returncode
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
         """Run a pdt command on the named schedules, or on every one.

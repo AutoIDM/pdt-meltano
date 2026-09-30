@@ -1,3 +1,4 @@
+import json
 import sys
 from types import SimpleNamespace
 
@@ -94,6 +95,7 @@ def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
 def test_every_setting_goes_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
     monkeypatch.setenv("PDT_AWS_TIMEZONE", "America/Chicago")
     monkeypatch.setenv("PDT_AWS_BUGABOO", "abcdef")
+    monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
     ext = Pdt()
     ext.write_project([])
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"] == {
@@ -167,18 +169,27 @@ def test_help_comes_from_pdt(monkeypatch):
     assert len(sent) == 4
 
 
-def test_stderr_goes_to_the_terminal_that_stdout_goes_to(monkeypatch):
-    dups = []
-    monkeypatch.setattr(main.os, "dup2", lambda *fds: dups.append(fds))
-    monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
-    monkeypatch.setattr(main.Pdt, "invoke", lambda self, *args: sys.exit(0))
-    monkeypatch.setattr(sys, "argv", ["pdt_meltano", "list"])
-    monkeypatch.setattr(sys, "stderr", SimpleNamespace(fileno=lambda: 2))
+def test_pdt_stderr_goes_to_the_terminal_that_stdout_goes_to(meltano_project, monkeypatch):
+    runs = []
+    monkeypatch.setattr(extension.subprocess, "run",
+                        lambda *args, **kwargs: runs.append(kwargs) or SimpleNamespace(returncode=0))
     for tty in (False, True):
-        monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: tty, fileno=lambda: 1))
-        with pytest.raises(SystemExit):
-            main.main()
-    assert dups == [(1, 2)]
+        monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: tty))
+        Pdt().pdt("list")
+    assert [run["stderr"] for run in runs] == [None, sys.stdout]
+
+
+def test_log_writes_a_level_meltano_reads(monkeypatch, capsys):
+    monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", "pdt_aws")
+    monkeypatch.delenv("PDT_AWS__LOG_PARSER", raising=False)
+    extension.log("warning", "hourly is deployed")
+    assert capsys.readouterr().err == "warning: hourly is deployed\n"
+    monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
+    extension.log("warning", "hourly is deployed")
+    line = json.loads(capsys.readouterr().err)
+    assert {key: line[key] for key in ("level", "message", "logger_name")} == {
+        "level": "warning", "message": "hourly is deployed", "logger_name": "pdt-meltano"}
+    assert {"pid", "ts", "thread_name", "app_name", "stream_name"} <= set(line)
 
 
 def test_deploy_needs_an_environment(meltano_project, monkeypatch):

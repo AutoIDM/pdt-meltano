@@ -9,7 +9,7 @@ from typing import List, Optional
 import typer
 from meltano.edk.extension import DescribeFormat
 
-from pdt_meltano.extension import Pdt, PdtMeltanoError
+from pdt_meltano.extension import Pdt, PdtMeltanoError, log
 
 app = typer.Typer(name="pdt_meltano", pretty_exceptions_enable=False, no_args_is_help=True,
                   epilog="Any other command, such as list, validate, or run, goes to pdt.")
@@ -20,7 +20,7 @@ def run(command: str, schedules: list[str], *extra: str) -> None:
     try:
         sys.exit(Pdt().each(command, schedules, tuple(extra)))
     except PdtMeltanoError as e:
-        typer.echo(f"error: {e}", err=True)
+        log("error", str(e))
         sys.exit(1)
 
 
@@ -51,11 +51,6 @@ def main() -> None:
     """Send any command that is not one of ours, and any request for help, to
     pdt, and name the command in usage and error text as the user typed it:
     `meltano invoke pdt-aws`."""
-    # `meltano invoke` logs each line on a utility's stderr at info level, and a
-    # prompt with no newline only when the command ends. Send stderr where
-    # stdout goes, straight to the terminal, when there is one.
-    if sys.stdout.isatty():
-        os.dup2(sys.stdout.fileno(), sys.stderr.fileno())
     args = sys.argv[1:]
     if {"-h", "--help"} & set(args) and args[0] not in ("describe", "initialize"):
         sys.exit(Pdt().pdt(*args))
@@ -64,7 +59,7 @@ def main() -> None:
         try:
             Pdt().invoke(*sys.argv[1:])
         except PdtMeltanoError as e:
-            typer.echo(f"error: {e}", err=True)
+            log("error", str(e))
             sys.exit(1)
     name = os.environ.get("MELTANO_UTILITY_NAME")
     app(prog_name=f"meltano invoke {name}" if name else "pdt_meltano")
