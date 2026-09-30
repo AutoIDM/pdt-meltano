@@ -170,3 +170,13 @@ def test_deploy_needs_an_environment(meltano_project, monkeypatch):
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
     with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):
         Pdt().each("deploy", [])
+
+
+def test_the_provider_setting_is_the_plugin_name_and_pdt_gets_its_own_name(meltano_project, monkeypatch):
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "gcloud")
+    ext = Pdt()
+    ext.write_project([])
+    assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"]["provider"] == "google-cloud"
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "google")
+    with pytest.raises(PdtMeltanoError, match="it must be one of aws, azure, gcloud."):
+        Pdt().write_project([])

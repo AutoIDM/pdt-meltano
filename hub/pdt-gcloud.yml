@@ -27,10 +27,10 @@ next_steps: |-
 pip_url: pdt-meltano
 repo: https://github.com/AutoIDM/pdt
 settings:
-- description: The pdt provider this entry deploys to. Leave it as it is; each Hub entry sets its own.
+- description: The cloud this entry deploys to. Leave it as it is; each Hub entry sets its own.
   label: Provider
   name: provider
-  value: google-cloud
+  value: gcloud
 - description: Which Google Cloud region should hold your jobs?
   label: Region
   name: region

@@ -36,7 +36,8 @@ from dotenv import dotenv_values
 from meltano.edk import models
 from meltano.edk.extension import ExtensionBase
 
-PROVIDERS = ("aws", "azure", "google-cloud")
+# The provider setting of each Hub entry, and the pdt provider it names.
+PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
             "output", ".pdt", ".pdt-state")
 # pdt saves these into pdt.yml on the first deploy.
@@ -166,7 +167,8 @@ class Pdt(ExtensionBase):
         An app folder whose schedule is gone is removed, unless it is still
         deployed: destroy needs the folder to find what to remove.
         """
-        if self.provider not in PROVIDERS:
+        provider = PROVIDERS.get(self.provider)
+        if provider is None:
             raise PdtMeltanoError(
                 f"the provider setting is {self.provider!r}; it must be one of "
                 f"{', '.join(PROVIDERS)}. Add the plugin from its Meltano Hub entry, "
@@ -175,10 +177,10 @@ class Pdt(ExtensionBase):
         project_file = self.stage / "pdt.yml"
         existing = yaml.safe_load(project_file.read_text()) if project_file.is_file() else {}
         platform = (existing or {}).get("platform") or {}
-        if platform.get("provider") != self.provider:
+        if platform.get("provider") != provider:
             platform = {}
         platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
-                    **self.settings}
+                    **self.settings, "provider": provider}
         project_file.write_text(
             "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
             "# are kept only for keys pdt writes back, such as the cloud account.\n"
