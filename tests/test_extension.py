@@ -152,6 +152,21 @@ def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
     assert sent == [("list", "--names")]
 
 
+def test_help_comes_from_pdt(monkeypatch):
+    sent = []
+    monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
+    monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: sent.append(args) or 0)
+    for argv in (["--help"], ["-h"], ["deploy", "--help"], ["runs", "daily-sync", "-h"]):
+        monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
+        with pytest.raises(SystemExit):
+            main.main()
+    assert sent == [("--help",), ("-h",), ("deploy", "--help"), ("runs", "daily-sync", "-h")]
+    monkeypatch.setattr(sys, "argv", ["pdt_meltano", "describe", "--help"])
+    with pytest.raises(SystemExit):
+        main.main()
+    assert len(sent) == 4
+
+
 def test_stderr_goes_to_the_terminal_that_stdout_goes_to(monkeypatch):
     dups = []
     monkeypatch.setattr(main.os, "dup2", lambda *fds: dups.append(fds))
