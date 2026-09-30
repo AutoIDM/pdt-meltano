@@ -1,50 +1,99 @@
 # pdt-meltano
 
-A Meltano utility that deploys each job schedule of a Meltano project as a scheduled container job in your cloud account, using [pdt](https://github.com/AutoIDM/pdt). [AutoIDM](https://www.autoidm.com/) makes pdt and pdt-meltano. It has three Meltano Hub entries, one for each cloud:
+pdt-meltano is a Meltano utility that wraps `pdt`. It runs your Meltano job schedules in your own cloud account. Each job schedule in `meltano.yml` becomes a scheduled container job. [AutoIDM](https://www.autoidm.com/) makes pdt-meltano and [pdt](https://github.com/AutoIDM/pdt).
 
-| Hub entry | Where the jobs run |
-| --- | --- |
-| `pdt-aws` | AWS Batch on Fargate |
-| `pdt-azure` | Azure Container Apps Jobs |
-| `pdt-gcloud` | Google Cloud Run Jobs |
+## Why use pdt-meltano
 
-## Use
+Because it's easy and lightweight. Deploy to your existing infrastructure right from your meltano project. You own everything and there's nothing extra to set up: no SAAS / PAAS, no subscription fees, no daemon. Works with your existing project and plays nicely with AI tools.
 
-```
-meltano add utility pdt-azure
-meltano config set pdt-azure region eastus2
-meltano invoke pdt-azure deploy
-```
+## Pick your cloud
 
-`deploy` makes one cloud job for each job schedule (`meltano schedule list`). It shows a plan and a monthly cost estimate, and asks before it changes anything. The first deploy asks you to sign in to your cloud account. Name schedules after `deploy` to deploy only those. `--yes` skips the question.
+There is one Meltano Hub entry for each cloud. Add the one for the cloud you use:
 
-| Command | What it does |
-| --- | --- |
-| `deploy [SCHEDULE...]` | deploy each job schedule, or only the ones named |
-| `destroy [SCHEDULE...]` | remove everything deploy created |
-| `runs SCHEDULE` | list the recent runs of one schedule |
-| `logs SCHEDULE [N]` | read the log of run N (1 is the newest) |
-| `health` | show whether the last run of each schedule succeeded |
-| `invoke PDT-ARGS...` | run any pdt command on the project pdt-meltano writes |
 
-Only job schedules with a repeating interval deploy. A schedule of `meltano elt` or one set to `@manual` or `@once` is left out, and deploy says why.
+| Hub entry                                      | Where the jobs run        | Default region |
+| ---------------------------------------------- | ------------------------- | -------------- |
+| `meltano add --plugin-type utility pdt-aws`    | AWS Batch on Fargate      | `us-east-1`    |
+| `meltano add --plugin-type utility pdt-azure`  | Azure Container Apps Jobs | `eastus2`      |
+| `meltano add --plugin-type utility pdt-gcloud` | Google Cloud Run Jobs     | `us-central1`  |
 
-## What happens
 
-pdt deploys an app: a folder holding `run.py` next to a `pdt.yml`. pdt-meltano writes one app for each schedule into `.meltano/run/pdt/`. Each app folder is a copy of your Meltano project without `.meltano/`, `.env`, and `.git`, plus a generated `run.py`, `config.yml`, and `Dockerfile`. The image installs the plugins of that schedule when it is built (`meltano install --schedule`), with the Meltano version you use now.
+The three entries have the same commands, and each command works the same way on each cloud. The examples below use `pdt-aws`. For another cloud, put `pdt-azure` or `pdt-gcloud` in its place.
 
-A cloud job starts from a new container each time. So `run.py` keeps the Meltano system database, which holds each extractor's state, in the app's pdt storage folder in your cloud account. It copies the database down before `meltano run` and back up after, and a lock stops two runs of the same schedule from using it at the same time.
+## Deploy your first schedule
 
-Every name in your project's `.env` goes to the cloud job as a secret. Change a value, then deploy again.
-
-## Develop
+Add the utility, and set the region if you do not want the default:
 
 ```
-uv sync
-uv run pytest
+meltano add --plugin-type utility pdt-aws
+meltano config set pdt-aws region us-west-2
 ```
 
-The `.yml` files in `hub/` are the three Meltano Hub entries, and `hub/autoidm.png` is their logo; a Hub pull request copies it to `static/assets/logos/utilities/autoidm.png`. To try one in a Meltano project before it is on the Hub, run `meltano add utility pdt-aws --from-ref <path to hub/pdt-aws.yml>`, then set `pip_url` in `meltano.yml` to `-e <path to this folder>` and run `meltano install`.
+pdt-meltano deploys job schedules only, so you need a job and a schedule for it. If you have them already, skip this step:
+
+```
+meltano job add github-to-postgres --tasks "tap-github target-postgres"
+meltano schedule add daily-sync --job github-to-postgres --interval '@daily'
+```
+
+Then deploy:
+
+```
+meltano invoke pdt-aws deploy
+```
+
+`deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Every value in your project's `.env` goes to the cloud job as a secret, so when you change a value, deploy again.
+
+A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltano leaves it out and tells you why. So does a schedule that runs `meltano elt` instead of a job.
+
+## Commands
+
+Commands take schedule names, the same names that `meltano schedule list` shows. For `deploy` and `destroy`, the schedule names are optional; leave them out to act on every schedule.
+
+
+| Command                                | What it does                                            |
+| -------------------------------------- | ------------------------------------------------------- |
+| `deploy [<schedule-name>...] [--yes]`  | deploy each schedule, or only the ones you name         |
+| `destroy [<schedule-name>...] [--yes]` | remove everything that deploy made in the cloud         |
+| `<pdt-command>...`                     | run any other pdt command, such as `list` or `validate` |
+| `--help`                               | list all pdt commands                                   |
+| `describe [--format <format>]`         | list the commands of pdt-meltano                        |
+| `initialize`                           | does nothing, because deploy writes what it needs       |
+
+
+`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The `<format>` of `describe` is `text`, `json`, or `yaml`.
+
+## Config
+
+pdt-meltano writes a pdt project into `.meltano/run/pdt/` each time you run a command. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
+
+These are the settings that pdt reads:
+
+
+| Setting          | Cloud        | What it sets                                                                |
+| ---------------- | ------------ | --------------------------------------------------------------------------- |
+| `provider`       | all          | the cloud; the Hub entry sets it, so do not change it                       |
+| `region`         | all          | where the jobs run                                                          |
+| `timezone`       | all          | the time zone of the schedule intervals; Azure accepts only `Etc/UTC`       |
+| `account`        | AWS          | the AWS account; pdt adds it on your first deploy                           |
+| `profile`        | AWS          | the profile in `~/.aws` to use; pdt adds it if it has to ask you            |
+| `subscription`   | Azure        | the Azure subscription; pdt adds it on your first deploy                    |
+| `resource_group` | Azure        | the resource group for the jobs                                             |
+| `environment`    | Azure        | a Container Apps environment you already have, as `<resource-group>/<name>` |
+| `project`        | Google Cloud | the Google Cloud project; pdt adds it on your first deploy                  |
+
+
+Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
+
+pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
+
+If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
+
+## Working with your team
+
+pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
+
+Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
 
 ## License
 

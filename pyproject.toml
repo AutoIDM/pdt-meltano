@@ -19,7 +19,7 @@ Source = "https://github.com/AutoIDM/pdt-meltano"
 pdt = "https://github.com/AutoIDM/pdt"
 
 [project.scripts]
-pdt_meltano = "pdt_meltano.main:app"
+pdt_meltano = "pdt_meltano.main:main"
 
 [build-system]
 requires = ["hatchling"]

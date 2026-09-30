@@ -8,15 +8,6 @@ commands:
   destroy:
     args: destroy
     description: Remove everything deploy created for each schedule, or only the ones named.
-  health:
-    args: health
-    description: Show whether the last run of each deployed schedule succeeded.
-  logs:
-    args: logs
-    description: Read the log of one run of a deployed schedule.
-  runs:
-    args: runs
-    description: List the recent runs of one deployed schedule.
 definition: |
   deploys each job schedule of a Meltano project as a scheduled container job on Google Cloud Run Jobs, using pdt. The Meltano system database, which holds each extractor's state, is kept in a pdt storage folder in your cloud account between runs.
 description: Deploy each Meltano job schedule as a scheduled job on Google Cloud Run Jobs
@@ -37,12 +28,10 @@ pip_url: pdt-meltano
 repo: https://github.com/AutoIDM/pdt
 settings:
 - description: The pdt provider this entry deploys to. Leave it as it is; each Hub entry sets its own.
-  env: PDT_MELTANO_PROVIDER
   label: Provider
   name: provider
   value: google-cloud
 - description: Which Google Cloud region should hold your jobs?
-  env: PDT_MELTANO_REGION
   label: Region
   name: region
   value: us-central1

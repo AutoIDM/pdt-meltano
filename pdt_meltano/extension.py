@@ -13,8 +13,9 @@ Meltano system database, which holds each extractor's state, in the
 app's pdt storage folder: it pulls the database before the run and
 pushes it after, under pdt's storage lock.
 
-The provider comes from the Meltano Hub entry the user added (a default
-setting value), and the region is the one setting the user chooses.
+Every setting of the plugin goes under platform: in pdt.yml, so pdt
+checks it. The provider comes from the Meltano Hub entry the user added (a
+default setting value); the user sets the others with `meltano config`.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ from meltano.edk.extension import ExtensionBase
 PROVIDERS = ("aws", "azure", "google-cloud")
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
             "output", ".pdt", ".pdt-state")
+# pdt saves these into pdt.yml on the first deploy.
+WRITTEN_BACK = ("account", "profile", "project", "subscription")
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -57,17 +60,19 @@ from pdt.utils import storage
 
 SCHEDULE = {schedule!r}
 JOB = {job!r}
+ENVIRONMENT = {environment!r}
 
 
 def main() -> int:
     if sys.argv[1:] == ["install"]:
-        return subprocess.run(["meltano", "install", "--schedule", SCHEDULE]).returncode
+        return subprocess.run(
+            ["meltano", "--environment", ENVIRONMENT, "install", "--schedule", SCHEDULE]).returncode
     load_env_json()
     store = storage.store()
     state = Path(".pdt-state").resolve()
     lease = store.pull("state/", state)
     env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{state / 'meltano.db'}}")
-    code = subprocess.run(["meltano", "run", *JOB], env=env).returncode
+    code = subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
     store.push(state, "state/", lease)
     return code
 
@@ -121,38 +126,43 @@ def parse_schedules(listing: dict) -> tuple[list[Schedule], list[str]]:
     return found, skipped
 
 
-def app_name(project: str, schedule: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", f"{project}-{schedule}".lower()).strip("-")
+def app_name(schedule: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", schedule.lower()).strip("-")
 
 
 class Pdt(ExtensionBase):
     def __init__(self) -> None:
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
         self.stage = self.root / ".meltano" / "run" / "pdt"
-        self.provider = os.environ.get("PDT_MELTANO_PROVIDER", "").strip()
-        self.region = os.environ.get("PDT_MELTANO_REGION", "").strip()
+        prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
+        self.settings = {key[len(prefix):].lower(): value.strip()
+                         for key, value in os.environ.items()
+                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""}
+        self.provider = self.settings.get("provider", "")
+        self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 
     def describe(self) -> models.Describe:
         return models.Describe(commands=[models.ExtensionCommand(
             name="pdt_meltano", description="deploy Meltano schedules with pdt",
-            commands=["deploy", "destroy", "runs", "logs", "health", "invoke", "describe",
-                      "initialize"])])
+            commands=["deploy", "destroy", "describe", "initialize"])])
 
-    def schedules(self, names: list[str]) -> list[Schedule]:
+    def schedules(self) -> list[Schedule]:
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))
         found, skipped = parse_schedules(listing)
-        known = {schedule.name for schedule in found}
-        unknown = [name for name in names if name not in known]
-        if unknown:
-            raise PdtMeltanoError(
-                f"no job schedule named {', '.join(unknown)}. This project has: "
-                f"{', '.join(sorted(known)) or 'none'}. Add one with `meltano schedule add`.")
         for reason in skipped:
             print(f"pdt-meltano: left out {reason}", file=sys.stderr)
-        return [schedule for schedule in found if not names or schedule.name in names]
+        return found
+
+    def deployed(self) -> set[str]:
+        state = self.stage / ".pdt" / "state"
+        return set(json.loads(state.read_text()).get("deployed") or []) if state.is_file() else set()
 
     def write_project(self, schedules: list[Schedule]) -> list[str]:
-        """Write the pdt project for these schedules and return their app names."""
+        """Write the pdt project for these schedules and return their app names.
+
+        An app folder whose schedule is gone is removed, unless it is still
+        deployed: destroy needs the folder to find what to remove.
+        """
         if self.provider not in PROVIDERS:
             raise PdtMeltanoError(
                 f"the provider setting is {self.provider!r}; it must be one of "
@@ -164,29 +174,37 @@ class Pdt(ExtensionBase):
         platform = (existing or {}).get("platform") or {}
         if platform.get("provider") != self.provider:
             platform = {}
-        platform["provider"] = self.provider
-        if self.region != "":
-            platform["region"] = self.region
+        platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
+                    **self.settings}
         project_file.write_text(
-            "# Written by pdt-meltano from the Meltano project. Changes here are kept only\n"
-            "# for keys pdt writes back, such as the cloud account.\n"
+            "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
+            "# are kept only for keys pdt writes back, such as the cloud account.\n"
             + yaml.safe_dump({"platform": platform}, sort_keys=False))
         env_names = sorted(dotenv_values(self.root / ".env")) if (self.root / ".env").is_file() else []
         versions = {"pdt": importlib.metadata.version("pdt-cli"),
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
         names = []
         for schedule in schedules:
-            name = app_name(self.root.name, schedule.name)
+            name = app_name(schedule.name)
             folder = self.stage / name
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*LEFT_OUT),
                             symlinks=True)
-            (folder / "run.py").write_text(
-                RUN_PY.format(schedule=schedule.name, job=schedule.job, **versions))
+            (folder / "run.py").write_text(RUN_PY.format(
+                schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
             (folder / "config.yml").write_text(yaml.safe_dump(
                 {"schedule": schedule.cron, "env": {"optional": env_names}}, sort_keys=False))
             names.append(name)
+        deployed = self.deployed()
+        for folder in self.stage.iterdir():
+            if folder.name in names or not (folder / "run.py").is_file():
+                continue
+            if folder.name in deployed:
+                print(f"pdt-meltano: {folder.name} is deployed but is no longer a job schedule "
+                      f"in meltano.yml. Run `destroy {folder.name}` to remove it.", file=sys.stderr)
+            else:
+                shutil.rmtree(folder)
         return names
 
     def pdt(self, *args: str) -> int:
@@ -196,7 +214,24 @@ class Pdt(ExtensionBase):
         return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env).returncode
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
-        apps = self.write_project(self.schedules(names))
+        """Run a pdt command on the named schedules, or on every one.
+
+        Only deploy is limited to the schedules in meltano.yml; the other
+        commands also reach a removed schedule that is still deployed.
+        """
+        if command == "deploy" and self.environment == "":
+            raise PdtMeltanoError(
+                "no Meltano environment is active, and `meltano run` needs one. Set "
+                "`default_environment` in meltano.yml, or deploy with `meltano --environment <name>`.")
+        current = self.write_project(self.schedules())
+        known = current if command == "deploy" else sorted(
+            run_py.parent.name for run_py in self.stage.glob("*/run.py"))
+        unknown = [name for name in names if app_name(name) not in known]
+        if unknown:
+            raise PdtMeltanoError(
+                f"no job schedule named {', '.join(unknown)}. This project has: "
+                f"{', '.join(known) or 'none'}. Add one with `meltano schedule add`.")
+        apps = [app_name(name) for name in names] or known
         if not apps:
             raise PdtMeltanoError("this project has no job schedule with a repeating interval. "
                                   "Add one with `meltano schedule add`.")
@@ -204,5 +239,5 @@ class Pdt(ExtensionBase):
         return max(codes)
 
     def invoke(self, command_name: str | None, *command_args: str) -> None:
-        self.write_project(self.schedules([]))
+        self.write_project(self.schedules())
         sys.exit(self.pdt(*([command_name] if command_name else []), *command_args))
