@@ -65,7 +65,7 @@ Commands take schedule names, the same names that `meltano schedule list` shows.
 
 ## Config
 
-pdt-meltano writes a pdt project into `.meltano/run/pdt/` each time you run a command. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
+pdt-meltano writes a pdt project into `.meltano/run/pdt-aws/`, the run folder Meltano gives the plugin, each time you run a command. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
 
 These are the settings that pdt reads:
 

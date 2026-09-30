@@ -37,6 +37,8 @@ def meltano_project(tmp_path, monkeypatch):
     (root / ".env").write_text("TAP_SECRET=abc\nTARGET_PASSWORD=def\n")
     (root / ".meltano" / "plugins").mkdir(parents=True)
     monkeypatch.setenv("MELTANO_PROJECT_ROOT", str(root))
+    monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(root / ".meltano"))
+    monkeypatch.setenv("MELTANO_UTILITY_NAME", "pdt-aws")
     monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", "pdt_aws")
     monkeypatch.setenv("PDT_AWS_PROVIDER", "aws")
     monkeypatch.setenv("PDT_AWS_REGION", "us-east-2")
@@ -52,6 +54,7 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     ext = Pdt()
     names = ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
     assert names == ["daily-sync"]
+    assert ext.stage == meltano_project / ".meltano" / "run" / "pdt-aws"
     app = ext.stage / "daily-sync"
     assert (app / "meltano.yml").is_file()
     assert (app / "extract" / "catalog.json").is_file()
@@ -67,6 +70,14 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert "WORKDIR /workspace/daily-sync" in (app / "Dockerfile").read_text()
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "aws", "region": "us-east-2"}}
+
+
+def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monkeypatch):
+    monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(meltano_project / "state" / "meltano"))
+    ext = Pdt()
+    ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    assert ext.stage == meltano_project / "state" / "meltano" / "run" / "pdt-aws"
+    assert not (ext.stage / "daily-sync" / "state" / "meltano").exists()
 
 
 def test_write_project_keeps_what_pdt_wrote_back(meltano_project):

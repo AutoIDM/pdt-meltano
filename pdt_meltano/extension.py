@@ -2,7 +2,8 @@
 
 pdt deploys an app: a folder holding run.py, next to a pdt.yml. This
 extension writes one such app for each Meltano schedule into a pdt
-project at .meltano/run/pdt/, then runs pdt on it. Each app folder is a
+project in the run folder Meltano gives the plugin,
+.meltano/run/<plugin name>/, then runs pdt on it. Each app folder is a
 copy of the Meltano project plus three generated files: run.py, which
 runs the schedule's job; config.yml, which holds its cron; and a
 Dockerfile, which installs the schedule's plugins when the image is
@@ -133,7 +134,9 @@ def app_name(schedule: str) -> str:
 class Pdt(ExtensionBase):
     def __init__(self) -> None:
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
-        self.stage = self.root / ".meltano" / "run" / "pdt"
+        sys_dir = Path(os.environ["MELTANO_SYS_DIR_ROOT"]).resolve()
+        self.stage = sys_dir / "run" / os.environ["MELTANO_UTILITY_NAME"]
+        self.left_out = LEFT_OUT + ((sys_dir.name,) if sys_dir.is_relative_to(self.root) else ())
         prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
         self.settings = {key[len(prefix):].lower(): value.strip()
                          for key, value in os.environ.items()
@@ -188,7 +191,7 @@ class Pdt(ExtensionBase):
             name = app_name(schedule.name)
             folder = self.stage / name
             shutil.rmtree(folder, ignore_errors=True)
-            shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*LEFT_OUT),
+            shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*self.left_out),
                             symlinks=True)
             (folder / "run.py").write_text(RUN_PY.format(
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
