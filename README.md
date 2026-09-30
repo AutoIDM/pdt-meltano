@@ -4,7 +4,7 @@ pdt-meltano is a Meltano utility that wraps `pdt`. It runs your Meltano job sche
 
 ## Why use pdt-meltano
 
-Because it's alarmingly easy and lightweight. Deploy to your existing infrastructure right from your meltano project. You own everything and there's nothing extra to set up: no SAAS / PAAS, no subscription fees, no daemon. Works with your existing project and plays nicely with AI tools.
+Because it's easy and lightweight. Deploy to your existing infrastructure right from your meltano project. You own everything and there's nothing extra to set up: no SAAS / PAAS, no subscription fees, no daemon. Works with your existing project and plays nicely with AI tools.
 
 ## Pick your cloud
 
