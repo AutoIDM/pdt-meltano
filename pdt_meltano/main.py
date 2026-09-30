@@ -48,11 +48,12 @@ def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
 
 
 def main() -> None:
-    """Send any command that is not one of ours, and any request for help, to
-    pdt, and name the command in usage and error text as the user typed it:
-    `meltano invoke pdt-aws`."""
+    """Send any command that is not one of ours, and any request for help or
+    the version, to pdt, and name the command in usage and error text as the
+    user typed it: `meltano invoke pdt-aws`."""
     args = sys.argv[1:]
-    if {"-h", "--help"} & set(args) and args[0] not in ("describe", "initialize"):
+    if args[:1] == ["--version"] or (
+            {"-h", "--help"} & set(args) and args[0] not in ("describe", "initialize")):
         sys.exit(Pdt().pdt(*args))
     own = {command.name or command.callback.__name__ for command in app.registered_commands}
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in own:
