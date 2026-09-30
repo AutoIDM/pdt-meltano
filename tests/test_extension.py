@@ -184,6 +184,9 @@ def test_log_writes_a_level_meltano_reads(monkeypatch, capsys):
     monkeypatch.delenv("PDT_AWS__LOG_PARSER", raising=False)
     extension.log("warning", "hourly is deployed")
     assert capsys.readouterr().err == "warning: hourly is deployed\n"
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    extension.log("warning", "hourly is deployed")
+    assert capsys.readouterr().out == "warning: hourly is deployed\n"
     monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
     extension.log("warning", "hourly is deployed")
     line = json.loads(capsys.readouterr().err)

@@ -101,11 +101,13 @@ class PdtMeltanoError(Exception):
 
 
 def log(level: str, message: str) -> None:
-    """Write a message on stderr at `level`: warning, error, or info.
+    """Write a message at `level`: warning, error, or info.
 
     Meltano logs each stderr line of a utility at info, unless the plugin sets
-    the structured-logging capability and a _log_parser, as each Hub entry
-    does. Then Meltano reads a Singer SDK JSON line at the level it names.
+    the structured-logging capability and a _log_parser in meltano.yml. Then
+    Meltano reads a Singer SDK JSON line at the level it names. Otherwise the
+    message goes to the terminal when there is one, where Meltano does not
+    label it.
     """
     namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
     if namespace and os.environ.get(f"{namespace}__LOG_PARSER") == "singer-sdk":
@@ -114,6 +116,9 @@ def log(level: str, message: str) -> None:
                               "stream_name": None, "message": message})
     else:
         message = f"{level}: {message}"
+        if sys.stdout.isatty():
+            print(message, flush=True)
+            return
     print(message, file=sys.stderr, flush=True)
 
 
