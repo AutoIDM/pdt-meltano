@@ -57,11 +57,11 @@ Commands take schedule names, the same names that `meltano schedule list` shows.
 | `destroy [<schedule-name>...] [--yes]` | remove everything that deploy made in the cloud         |
 | `<pdt-command>...`                     | run any other pdt command, such as `list` or `validate` |
 | `--help`                               | list all pdt commands                                   |
-| `describe [--format text|json|yaml]`   | list the commands of pdt-meltano                        |
+| `describe [--format <format>]`         | list the commands of pdt-meltano                        |
 | `initialize`                           | does nothing, because deploy writes what it needs       |
 
 
-`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud.
+`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The `<format>` of `describe` is `text`, `json`, or `yaml`.
 
 ## Config
 
@@ -88,6 +88,12 @@ Secrets come from your project's `.env`, as described in [Deploy your first sche
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
 If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
+
+## Working with a team
+
+Each schedule name is also the name of its cloud job and of its storage folder, which holds the Meltano system database. So every copy of your Meltano project that deploys to the same cloud account manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
+
+Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job, and the two projects share one Meltano system database.
 
 ## License
 
