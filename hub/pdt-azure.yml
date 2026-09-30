@@ -17,7 +17,7 @@ ext_repo: https://github.com/AutoIDM/pdt-meltano
 keywords:
 - meltano_edk
 label: pdt - deploy Azure Container Job
-logo_url: /assets/logos/utilities/autoidm.png
+logo_url: /assets/logos/utilities/pdt-azure.png
 maintenance_status: development
 name: pdt-azure
 namespace: pdt_azure

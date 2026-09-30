@@ -17,7 +17,7 @@ ext_repo: https://github.com/AutoIDM/pdt-meltano
 keywords:
 - meltano_edk
 label: pdt - deploy Google Cloud Run
-logo_url: /assets/logos/utilities/autoidm.png
+logo_url: /assets/logos/utilities/pdt-gcloud.png
 maintenance_status: development
 name: pdt-gcloud
 namespace: pdt_gcloud
