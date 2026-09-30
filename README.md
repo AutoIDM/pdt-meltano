@@ -12,7 +12,7 @@ There is one Meltano Hub entry for each cloud. Add the one for the cloud you use
 
 
 | Hub entry                                      | Where the jobs run        | Default region |
-| ---------------------------------------------- | ------------------------- | -------------- |
+| ---------------------------------------------- | ------------------------- | ---------- |
 | `meltano add --plugin-type utility pdt-aws`    | AWS Batch on Fargate      | `us-east-1`    |
 | `meltano add --plugin-type utility pdt-azure`  | Azure Container Apps Jobs | `eastus2`      |
 | `meltano add --plugin-type utility pdt-gcloud` | Google Cloud Run Jobs     | `us-central1`  |
@@ -122,11 +122,11 @@ meltano install utility pdt-aws
 For another cloud, change `name`, `namespace`, and the two setting values to the ones in the matching file in `hub/`:
 
 
-| `name`       | `namespace`  | `provider`     | `region`      |
-| ------------ | ------------ | -------------- | ------------- |
-| `pdt-aws`    | `pdt_aws`    | `aws`          | `us-east-1`   |
-| `pdt-azure`  | `pdt_azure`  | `azure`        | `eastus2`     |
-| `pdt-gcloud` | `pdt_gcloud` | `google-cloud` | `us-central1` |
+| `name`       | `namespace`  | `provider` | `region`      |
+| ------------ | ------------ | ---------- | ------------- |
+| `pdt-aws`    | `pdt_aws`    | `aws`      | `us-east-1`   |
+| `pdt-azure`  | `pdt_azure`  | `azure`    | `eastus2`     |
+| `pdt-gcloud` | `pdt_gcloud` | `gcloud`   | `us-central1` |
 
 
 To use a local copy of this repo instead, set `pip_url` to `-e /path/to/pdt-meltano`.
