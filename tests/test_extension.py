@@ -1,4 +1,5 @@
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -146,6 +147,20 @@ def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
     with pytest.raises(SystemExit):
         main.main()
     assert sent == [("list", "--names")]
+
+
+def test_stderr_goes_to_the_terminal_that_stdout_goes_to(monkeypatch):
+    dups = []
+    monkeypatch.setattr(main.os, "dup2", lambda *fds: dups.append(fds))
+    monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
+    monkeypatch.setattr(main.Pdt, "invoke", lambda self, *args: sys.exit(0))
+    monkeypatch.setattr(sys, "argv", ["pdt_meltano", "list"])
+    monkeypatch.setattr(sys, "stderr", SimpleNamespace(fileno=lambda: 2))
+    for tty in (False, True):
+        monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: tty, fileno=lambda: 1))
+        with pytest.raises(SystemExit):
+            main.main()
+    assert dups == [(1, 2)]
 
 
 def test_deploy_needs_an_environment(meltano_project, monkeypatch):

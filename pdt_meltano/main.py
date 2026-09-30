@@ -50,6 +50,11 @@ def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
 def main() -> None:
     """Send any command that is not one of ours to pdt, and name the command in
     usage and error text as the user typed it: `meltano invoke pdt-aws`."""
+    # `meltano invoke` logs each line on a utility's stderr at info level, and a
+    # prompt with no newline only when the command ends. Send stderr where
+    # stdout goes, straight to the terminal, when there is one.
+    if sys.stdout.isatty():
+        os.dup2(sys.stdout.fileno(), sys.stderr.fileno())
     own = {command.name or command.callback.__name__ for command in app.registered_commands}
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in own:
         try:
