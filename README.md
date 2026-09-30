@@ -51,38 +51,29 @@ A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltan
 Commands take schedule names, the same names that `meltano schedule list` shows. For `deploy` and `destroy`, the schedule names are optional; leave them out to act on every schedule.
 
 
-| Command                        | What it does                                         |
-| ------------------------------ | ---------------------------------------------------- |
-| `deploy [<schedule-name>...]`  | deploy each schedule, or only the ones you name      |
-| `destroy [<schedule-name>...]` | remove everything that deploy made in the cloud      |
-| `invoke <pdt-command>...`      | run any other pdt command, for example `invoke list` |
+| Command                                | What it does                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| `deploy [<schedule-name>...] [--yes]`  | deploy each schedule, or only the ones you name                        |
+| `destroy [<schedule-name>...] [--yes]` | remove everything that deploy made in the cloud                        |
+| `invoke <pdt-command>...`              | run any other pdt command, for example `invoke list`                   |
+| `describe [--format text\|json\|yaml]` | list the commands of pdt-meltano; the Meltano EDK requires it          |
+| `initialize [--force]`                 | does nothing, because deploy writes what it needs; the EDK requires it |
+
+`--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The Meltano Extension Developer Kit (EDK) requires `describe` and `initialize` in every extension that uses it. `initialize` ignores `--force`.
 
 
 ## Config
 
-pdt-meltano has two settings, `provider` and `region`. You set them with `meltano config`, the same way as for any other plugin, and Meltano keeps them in `meltano.yml`.
+pdt-meltano writes a pdt project into `.meltano/run/pdt/` each time you run a command, and `pdt.yml` in that folder holds the settings for every schedule. Set them with Meltano, not in `pdt.yml`:
 
-| Setting    | How you set it                                | Where it goes in `pdt.yml` |
-| ---------- | --------------------------------------------- | -------------------------- |
-| `provider` | the Hub entry sets it; do not change it       | `platform.provider`        |
-| `region`   | `meltano config set pdt-aws region us-west-2` | `platform.region`          |
 
-Those two are the only settings. Meltano lets you set any name, so `meltano config set pdt-aws timezone UTC` works, but pdt-meltano does not read it.
+| Setting    | Where it comes from                          | Where it goes in `pdt.yml` |
+| ---------- | -------------------------------------------- | -------------------------- |
+| `provider` | the Hub entry you added; do not change it    | `platform.provider`        |
+| `region`   | `meltano config set pdt-aws region <region>` | `platform.region`          |
 
-Each time you run a command, pdt-meltano writes a pdt project into `.meltano/run/pdt/`. Its `pdt.yml` looks like this:
 
-```yaml
-platform:
-  provider: aws            # from the provider setting
-  region: us-west-2        # from the region setting
-  account: '123456789012'  # pdt adds this on your first deploy, and pdt-meltano keeps it
-```
-
-Do not edit `pdt.yml` yourself. `.meltano/` is not in Git, so your edits stay on your computer only.
-
-Each schedule's interval comes from `meltano.yml`, and its secrets come from `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
-
-## When you change meltano.yml
+Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
