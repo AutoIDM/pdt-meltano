@@ -95,17 +95,22 @@ pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano proj
 
 Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
 
-## Install from a clone
+## Install from GitHub
 
-To use your own copy of this repo in a Meltano project, add it to `meltano.yml` with an editable `pip_url`:
+Until the Hub entries are published, add the plugin to `meltano.yml` yourself. This `pip_url` installs pdt-meltano from GitHub:
 
 ```yaml
 plugins:
   utilities:
   - name: pdt-aws
     namespace: pdt_aws
-    pip_url: -e /path/to/pdt-meltano
+    pip_url: git+https://github.com/AutoIDM/pdt-meltano.git
     executable: pdt_meltano
+    settings:
+    - name: provider
+      value: aws
+    - name: region
+      value: us-east-1
 ```
 
 Then install it:
@@ -114,13 +119,17 @@ Then install it:
 meltano install utility pdt-aws
 ```
 
-For another cloud, use `pdt-azure` or `pdt-gcloud`, and copy the `settings` from the matching file in `hub/`.
+For another cloud, change `name`, `namespace`, and the two setting values to the ones in the matching file in `hub/`:
 
-To run `pdt_meltano` outside of Meltano, install it with uv, then run it from inside a Meltano project:
 
-```
-uv tool install -e /path/to/pdt-meltano
-```
+| `name`       | `namespace`  | `provider`     | `region`      |
+| ------------ | ------------ | -------------- | ------------- |
+| `pdt-aws`    | `pdt_aws`    | `aws`          | `us-east-1`   |
+| `pdt-azure`  | `pdt_azure`  | `azure`        | `eastus2`     |
+| `pdt-gcloud` | `pdt_gcloud` | `google-cloud` | `us-central1` |
+
+
+To use a local copy of this repo instead, set `pip_url` to `-e /path/to/pdt-meltano`.
 
 ## License
 
