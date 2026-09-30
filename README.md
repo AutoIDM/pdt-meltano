@@ -83,27 +83,17 @@ These are the settings that pdt reads:
 | `project`        | Google Cloud | the Google Cloud project; pdt adds it on your first deploy                  |
 
 
-Secrets come only from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule). A variable that is set only in your shell, in CI, or by a secrets manager does not get to the cloud job, although `meltano run` on your computer can see it. Put every value that the job needs in `.env` before you deploy.
+Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
 If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
 
-## Meltano environments
+## Working with your team
 
-The cloud job runs in the Meltano environment that is active when you deploy. That is `default_environment` from `meltano.yml`, unless you choose another one:
+pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
 
-```
-meltano --environment prod invoke pdt-aws deploy
-```
-
-`meltano run` needs an environment, so `deploy` stops if none is active. Each schedule has one cloud job, so the last deploy decides the environment. If you deploy `daily-sync` with `prod` and then with `dev`, the job runs `dev`.
-
-## Working with a team
-
-Each schedule name is also the name of its cloud job and of its storage folder, which holds the Meltano system database. So every copy of your Meltano project that deploys to the same cloud account manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
-
-Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job, and the two projects share one Meltano system database.
+Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
 
 ## License
 
