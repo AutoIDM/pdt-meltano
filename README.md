@@ -33,7 +33,7 @@ pdt-meltano deploys job schedules only, so you need a job and a schedule for it.
 
 ```
 meltano job add github-to-postgres --tasks "tap-github target-postgres"
-meltano schedule add daily-sync --job github-to-postgres --interval '@daily'
+meltano schedule add meltano-daily-sync --job github-to-postgres --interval '@daily'
 ```
 
 Then deploy:
@@ -91,9 +91,45 @@ If you remove a schedule that is still deployed, its cloud job keeps running. pd
 
 ## Working with your team
 
-pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `daily-sync` from your own copy, you both update the same job.
+pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `meltano-daily-sync` from your own copy, you both update the same job.
 
 Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
+
+## Install from GitHub
+
+Until the Hub entries are published, add the plugin to `meltano.yml` yourself. This `pip_url` installs pdt-meltano from GitHub:
+
+```yaml
+plugins:
+  utilities:
+  - name: pdt-aws
+    namespace: pdt_aws
+    pip_url: git+https://github.com/AutoIDM/pdt-meltano.git
+    executable: pdt_meltano
+    settings:
+    - name: provider
+      value: aws
+    - name: region
+      value: us-east-1
+```
+
+Then install it:
+
+```
+meltano install utility pdt-aws
+```
+
+For another cloud, change `name`, `namespace`, and the two setting values to the ones in the matching file in `hub/`:
+
+
+| `name`       | `namespace`  | `provider`     | `region`      |
+| ------------ | ------------ | -------------- | ------------- |
+| `pdt-aws`    | `pdt_aws`    | `aws`          | `us-east-1`   |
+| `pdt-azure`  | `pdt_azure`  | `azure`        | `eastus2`     |
+| `pdt-gcloud` | `pdt_gcloud` | `google-cloud` | `us-central1` |
+
+
+To use a local copy of this repo instead, set `pip_url` to `-e /path/to/pdt-meltano`.
 
 ## License
 
