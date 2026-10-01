@@ -1,4 +1,6 @@
+import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -93,6 +95,7 @@ def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
 def test_every_setting_goes_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
     monkeypatch.setenv("PDT_AWS_TIMEZONE", "America/Chicago")
     monkeypatch.setenv("PDT_AWS_BUGABOO", "abcdef")
+    monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
     ext = Pdt()
     ext.write_project([])
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"] == {
@@ -105,13 +108,16 @@ def test_a_missing_provider_names_the_fix(meltano_project, monkeypatch):
         Pdt().write_project([])
 
 
-def test_write_project_follows_meltano_yml(meltano_project):
+def test_write_project_follows_meltano_yml(meltano_project, capsys):
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"]), Schedule("hourly", "hourly", ["sync"])])
     (ext.stage / ".pdt").mkdir()
     (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly"]}')
     assert ext.write_project([Schedule("weekly", "weekly", ["sync"])]) == ["weekly"]
     assert sorted(run_py.parent.name for run_py in ext.stage.glob("*/run.py")) == ["hourly", "weekly"]
+    assert capsys.readouterr().err == (
+        "warning: hourly is deployed but is no longer a job schedule in meltano.yml. Run "
+        "`meltano --environment=prod invoke pdt-aws destroy hourly` to remove it.\n")
 
 
 def test_each_takes_schedule_names(meltano_project, monkeypatch):
@@ -148,7 +154,67 @@ def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
     assert sent == [("list", "--names")]
 
 
+def test_help_comes_from_pdt(monkeypatch):
+    sent = []
+    monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
+    monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: sent.append(args) or 0)
+    for argv in (["--help"], ["-h"], ["runs", "daily-sync", "-h"], ["--version"]):
+        monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
+        with pytest.raises(SystemExit):
+            main.main()
+    assert sent == [("--help",), ("-h",), ("runs", "daily-sync", "-h"), ("--version",)]
+
+
+def test_help_for_our_commands_is_ours(monkeypatch, capsys):
+    monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: pytest.fail("sent to pdt"))
+    for argv in (["deploy", "--help"], ["destroy", "-h"], ["describe", "--help"]):
+        monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
+        with pytest.raises(SystemExit):
+            main.main()
+        assert "Usage:" in capsys.readouterr().out
+
+
+def test_pdt_stderr_goes_to_the_terminal_that_stdout_goes_to(meltano_project, monkeypatch):
+    runs = []
+    monkeypatch.setattr(extension.subprocess, "run",
+                        lambda *args, **kwargs: runs.append(kwargs) or SimpleNamespace(returncode=0))
+    for tty in (False, True):
+        monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: tty))
+        Pdt().pdt("list")
+    assert [run["stderr"] for run in runs] == [None, sys.stdout]
+
+
+def test_log_writes_a_level_meltano_reads(monkeypatch, capsys):
+    monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", "pdt_aws")
+    monkeypatch.delenv("PDT_AWS__LOG_PARSER", raising=False)
+    extension.log("warning", "hourly is deployed")
+    assert capsys.readouterr().err == "warning: hourly is deployed\n"
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    extension.log("warning", "hourly is deployed")
+    assert capsys.readouterr().out == "warning: hourly is deployed\n"
+    monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
+    extension.log("warning", "hourly is deployed")
+    line = json.loads(capsys.readouterr().err)
+    assert {key: line[key] for key in ("level", "message", "logger_name")} == {
+        "level": "warning", "message": "hourly is deployed", "logger_name": "pdt-meltano"}
+    assert {"pid", "ts", "thread_name", "app_name", "stream_name"} <= set(line)
+
+
+def test_describe_text_names_the_commands(meltano_project):
+    assert "- deploy" in Pdt().describe_formatted()
+
+
 def test_deploy_needs_an_environment(meltano_project, monkeypatch):
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
     with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):
         Pdt().each("deploy", [])
+
+
+def test_the_provider_setting_is_the_plugin_name_and_pdt_gets_its_own_name(meltano_project, monkeypatch):
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "gcloud")
+    ext = Pdt()
+    ext.write_project([])
+    assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"]["provider"] == "google-cloud"
+    monkeypatch.setenv("PDT_AWS_PROVIDER", "google")
+    with pytest.raises(PdtMeltanoError, match="it must be one of aws, azure, gcloud."):
+        Pdt().write_project([])

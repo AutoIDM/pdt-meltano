@@ -29,14 +29,16 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
 from dotenv import dotenv_values
 from meltano.edk import models
-from meltano.edk.extension import ExtensionBase
+from meltano.edk.extension import DescribeFormat, ExtensionBase
 
-PROVIDERS = ("aws", "azure", "google-cloud")
+# The provider setting of each Hub entry, and the pdt provider it names.
+PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
             "output", ".pdt", ".pdt-state")
 # pdt saves these into pdt.yml on the first deploy.
@@ -98,6 +100,28 @@ class PdtMeltanoError(Exception):
     pass
 
 
+def log(level: str, message: str) -> None:
+    """Write a message at `level`: warning, error, or info.
+
+    Meltano logs each stderr line of a utility at info, unless the plugin sets
+    the structured-logging capability and a _log_parser in meltano.yml. Then
+    Meltano reads a Singer SDK JSON line at the level it names. Otherwise the
+    message goes to the terminal when there is one, where Meltano does not
+    label it.
+    """
+    namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
+    if namespace and os.environ.get(f"{namespace}__LOG_PARSER") == "singer-sdk":
+        message = json.dumps({"level": level, "pid": os.getpid(), "logger_name": "pdt-meltano",
+                              "ts": time.time(), "thread_name": "main", "app_name": "pdt-meltano",
+                              "stream_name": None, "message": message})
+    else:
+        message = f"{level}: {message}"
+        if sys.stdout.isatty():
+            print(message, flush=True)
+            return
+    print(message, file=sys.stderr, flush=True)
+
+
 @dataclasses.dataclass(frozen=True)
 class Schedule:
     name: str
@@ -140,7 +164,8 @@ class Pdt(ExtensionBase):
         prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
         self.settings = {key[len(prefix):].lower(): value.strip()
                          for key, value in os.environ.items()
-                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""}
+                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""
+                         and not key[len(prefix):].startswith("_")}
         self.provider = self.settings.get("provider", "")
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 
@@ -149,11 +174,17 @@ class Pdt(ExtensionBase):
             name="pdt_meltano", description="deploy Meltano schedules with pdt",
             commands=["deploy", "destroy", "describe", "initialize"])])
 
+    def describe_formatted(self, output_format: DescribeFormat = DescribeFormat.text) -> str:
+        # The EDK prints text with devtools, which shows no fields of the EDK's slots dataclasses.
+        if output_format == DescribeFormat.text:
+            output_format = DescribeFormat.yaml
+        return super().describe_formatted(output_format)
+
     def schedules(self) -> list[Schedule]:
         listing = json.loads(meltano("schedule", "list", "--format=json", cwd=self.root))
         found, skipped = parse_schedules(listing)
         for reason in skipped:
-            print(f"pdt-meltano: left out {reason}", file=sys.stderr)
+            log("info", f"left out {reason}")
         return found
 
     def deployed(self) -> set[str]:
@@ -166,7 +197,8 @@ class Pdt(ExtensionBase):
         An app folder whose schedule is gone is removed, unless it is still
         deployed: destroy needs the folder to find what to remove.
         """
-        if self.provider not in PROVIDERS:
+        provider = PROVIDERS.get(self.provider)
+        if provider is None:
             raise PdtMeltanoError(
                 f"the provider setting is {self.provider!r}; it must be one of "
                 f"{', '.join(PROVIDERS)}. Add the plugin from its Meltano Hub entry, "
@@ -175,10 +207,10 @@ class Pdt(ExtensionBase):
         project_file = self.stage / "pdt.yml"
         existing = yaml.safe_load(project_file.read_text()) if project_file.is_file() else {}
         platform = (existing or {}).get("platform") or {}
-        if platform.get("provider") != self.provider:
+        if platform.get("provider") != provider:
             platform = {}
         platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
-                    **self.settings}
+                    **self.settings, "provider": provider}
         project_file.write_text(
             "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
             "# are kept only for keys pdt writes back, such as the cloud account.\n"
@@ -204,8 +236,10 @@ class Pdt(ExtensionBase):
             if folder.name in names or not (folder / "run.py").is_file():
                 continue
             if folder.name in deployed:
-                print(f"pdt-meltano: {folder.name} is deployed but is no longer a job schedule "
-                      f"in meltano.yml. Run `destroy {folder.name}` to remove it.", file=sys.stderr)
+                environment = f" --environment={self.environment}" if self.environment else ""
+                log("warning", f"{folder.name} is deployed but is no longer a job schedule in "
+                    f"meltano.yml. Run `meltano{environment} invoke "
+                    f"{os.environ['MELTANO_UTILITY_NAME']} destroy {folder.name}` to remove it.")
             else:
                 shutil.rmtree(folder)
         return names
@@ -214,7 +248,11 @@ class Pdt(ExtensionBase):
         env = {**os.environ, **{key: value for key, value in dotenv_values(self.root / ".env").items()
                                 if value is not None and key not in os.environ},
                "PDT_PROJECT": str(self.stage)}
-        return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env).returncode
+        # Meltano shows a utility's stderr one line at a time, so a prompt with no
+        # newline would not show. pdt's stderr goes to the terminal instead.
+        stderr = sys.stdout if sys.stdout.isatty() else None
+        return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env,
+                              stderr=stderr).returncode
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
         """Run a pdt command on the named schedules, or on every one.
