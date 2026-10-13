@@ -36,13 +36,16 @@ import yaml
 from dotenv import dotenv_values
 from meltano.edk import models
 from meltano.edk.extension import DescribeFormat, ExtensionBase
+from pdt.deploy_common import BASE_IMAGE
 
 # The provider setting of each Hub entry, and the pdt provider it names.
 PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
-            "output", ".pdt", ".pdt-state")
+            "output", ".pdt")
 # pdt saves these into pdt.yml on the first deploy.
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
+# pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
+APP_WRITTEN_BACK = ("enabled", "pause")
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -56,7 +59,6 @@ RUN_PY = '''\
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from pdt.config import load_env_json
 from pdt.utils import storage
@@ -71,26 +73,21 @@ def main() -> int:
         return subprocess.run(
             ["meltano", "--environment", ENVIRONMENT, "install", "--schedule", SCHEDULE]).returncode
     load_env_json()
-    store = storage.store()
-    state = Path(".pdt-state").resolve()
-    lease = store.pull("state/", state)
-    env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{state / 'meltano.db'}}")
-    code = subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
-    store.push(state, "state/", lease)
-    return code
+    with storage.sync(push_state_on_error=True) as run:
+        env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{run.state / 'meltano.db'}}")
+        return subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
 
 
 if __name__ == "__main__":
     sys.exit(main())
 '''
 
-DOCKERFILE = """\
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+DOCKERFILE = f"FROM {BASE_IMAGE}\n" + """\
 RUN apt-get update && apt-get install -y --no-install-recommends git \\
     && rm -rf /var/lib/apt/lists/*
 COPY . /workspace
 WORKDIR /workspace/{app}
-ENV PDT_PROJECT=/workspace NO_COLOR=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
+ENV PDT_PROJECT=/workspace NO_COLOR=1 PYTHONUNBUFFERED=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
 RUN uv sync --script run.py && uv run --script run.py install
 ENTRYPOINT ["sh", "-c", "uv run --script run.py; code=$?; echo \\"pdt: exit $code\\"; exit $code"]
 """
@@ -222,14 +219,17 @@ class Pdt(ExtensionBase):
         for schedule in schedules:
             name = app_name(schedule.name)
             folder = self.stage / name
+            config = folder / "config.yml"
+            own = (yaml.safe_load(config.read_text()) if config.is_file() else None) or {}
+            kept = {key: own[key] for key in APP_WRITTEN_BACK if key in own}
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*self.left_out),
                             symlinks=True)
             (folder / "run.py").write_text(RUN_PY.format(
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
-            (folder / "config.yml").write_text(yaml.safe_dump(
-                {"schedule": schedule.cron, "env": {"optional": env_names}}, sort_keys=False))
+            config.write_text(yaml.safe_dump(
+                {"schedule": schedule.cron, "env": {"optional": env_names}, **kept}, sort_keys=False))
             names.append(name)
         deployed = self.deployed()
         for folder in self.stage.iterdir():

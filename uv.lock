@@ -465,7 +465,7 @@ wheels = [
 
 [[package]]
 name = "pdt-cli"
-version = "0.1.2"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "argcomplete" },
@@ -479,9 +479,9 @@ dependencies = [
     { name = "rich-argparse" },
     { name = "shellingham" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1f/1b/230f3ae88fcb28ef2634ce52561e248103460f13775c1fa03b338928caf4/pdt_cli-0.1.2.tar.gz", hash = "sha256:e566c69953f088e96b388400d5f36656679915c45f3a348d708d1720325afd59", size = 153680, upload-time = "2026-09-22T19:06:04.552Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/f2/469552a09639b8fdf76ac68305f0d057a0205be7612fd0fa1deea0c3e921/pdt_cli-0.1.8.tar.gz", hash = "sha256:e72b9925cfe33fe87bcb1acc294778c1f3af21faab1e479a390e87d608c3a001", size = 413659, upload-time = "2026-10-13T16:11:20.182Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/07/7ceecba27772f1bcab7826db4cb7fc7a0945fa0493e97ce89466c6913959/pdt_cli-0.1.2-py3-none-any.whl", hash = "sha256:a182462895834aa2e710d7c63684629c9cae12c52a8de00a33f53106940d91bf", size = 123892, upload-time = "2026-09-22T19:06:03.098Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/91/ecd4a3f48de8b7c60c07282264fae27e67a83c121bed56d7258e787d014b/pdt_cli-0.1.8-py3-none-any.whl", hash = "sha256:83340913873c79b4dd169b3734c376cccccd19b68d2de21e1d0e6a82ec502f8e", size = 285263, upload-time = "2026-10-13T16:11:18.58Z" },
 ]
 
 [[package]]
@@ -504,7 +504,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "meltano-edk", specifier = ">=0.6,<0.7" },
-    { name = "pdt-cli", specifier = ">=0.1.2" },
+    { name = "pdt-cli", specifier = ">=0.1.8,<0.2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "typer", specifier = ">=0.12" },

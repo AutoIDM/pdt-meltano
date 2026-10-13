@@ -23,7 +23,8 @@ name: pdt-azure
 namespace: pdt_azure
 next_steps: |-
   1. Add a job schedule if you have none: `meltano schedule add <name> --job <job> --interval '@daily'`.
-  2. Deploy it: `meltano invoke pdt-azure:deploy`. The first deploy asks you to sign in to your cloud account.
+  2. Deploy it: `meltano invoke pdt-azure:deploy`. The first deploy asks you to sign in to your cloud account. It builds the image with Docker on this computer when Docker works, else in the cloud.
+  3. When a schedule has no successful run yet, deploy asks `Start a run now and show its log? [y/N]`. A run loads data. Press Enter to skip it.
 pip_url: pdt-meltano
 repo: https://github.com/AutoIDM/pdt
 settings:
