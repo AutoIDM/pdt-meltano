@@ -44,6 +44,10 @@ meltano invoke pdt-aws deploy
 
 `deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Every value in your project's `.env` goes to the cloud job as a secret, so when you change a value, deploy again.
 
+`deploy` builds the container image with Docker on this computer when Docker works. Otherwise it builds the image in the cloud: with CodeBuild on AWS, ACR Tasks on Azure, or Cloud Build on Google Cloud. You do not need to install Docker.
+
+When a schedule has no successful run yet, `deploy` then asks `Start a run now and show its log? [y/N]`. A run loads data, the same as a run on the schedule. Press Enter to skip it. With `--yes`, `deploy` does not ask and starts no run.
+
 A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltano leaves it out and tells you why. So does a schedule that runs `meltano elt` instead of a job.
 
 ## Commands
@@ -122,11 +126,11 @@ meltano install utility pdt-aws
 For another cloud, change `name`, `namespace`, and the two setting values to the ones in the matching file in `hub/`:
 
 
-| `name`       | `namespace`  | `provider`     | `region`      |
-| ------------ | ------------ | -------------- | ------------- |
-| `pdt-aws`    | `pdt_aws`    | `aws`          | `us-east-1`   |
-| `pdt-azure`  | `pdt_azure`  | `azure`        | `eastus2`     |
-| `pdt-gcloud` | `pdt_gcloud` | `google-cloud` | `us-central1` |
+| `name`       | `namespace`  | `provider` | `region`      |
+| ------------ | ------------ | ---------- | ------------- |
+| `pdt-aws`    | `pdt_aws`    | `aws`      | `us-east-1`   |
+| `pdt-azure`  | `pdt_azure`  | `azure`    | `eastus2`     |
+| `pdt-gcloud` | `pdt_gcloud` | `gcloud`   | `us-central1` |
 
 
 To use a local copy of this repo instead, set `pip_url` to `-e /path/to/pdt-meltano`.

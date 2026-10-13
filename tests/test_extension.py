@@ -92,6 +92,17 @@ def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
         "account": "123456789012", "provider": "aws", "region": "us-east-2"}
 
 
+def test_write_project_keeps_what_pdt_wrote_into_an_app_config(meltano_project):
+    ext = Pdt()
+    ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    config = ext.stage / "daily-sync" / "config.yml"
+    config.write_text(config.read_text() + "pause: true\nenabled: false\n")
+    ext.write_project([Schedule("daily-sync", "hourly", ["sync"])])
+    assert yaml.safe_load(config.read_text()) == {
+        "schedule": "hourly", "env": {"optional": ["TAP_SECRET", "TARGET_PASSWORD"]},
+        "enabled": False, "pause": True}
+
+
 def test_every_setting_goes_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
     monkeypatch.setenv("PDT_AWS_TIMEZONE", "America/Chicago")
     monkeypatch.setenv("PDT_AWS_BUGABOO", "abcdef")

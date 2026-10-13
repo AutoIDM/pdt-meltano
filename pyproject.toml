@@ -8,7 +8,7 @@ license = "MIT"
 dependencies = [
     "meltano.edk>=0.6,<0.7",
     "typer>=0.12",
-    "pdt-cli>=0.1.9",
+    "pdt-cli>=0.1.9,<0.2",
     "pyyaml",
     "python-dotenv",
 ]
