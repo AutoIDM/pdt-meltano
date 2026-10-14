@@ -305,6 +305,16 @@ def test_initialize_writes_a_starter_pdt_yml_once(meltano_project):
     assert shared.read_text() == "# mine\n"
 
 
+def test_the_starter_comes_with_a_gitignore_for_the_lock_file_unless_one_exists(meltano_project):
+    ext = Pdt()
+    ext.initialize()
+    assert (ext.config_dir / ".gitignore").read_text() == "pdt.yml.lock\n"
+    (ext.config_dir / "pdt.yml").unlink()
+    (ext.config_dir / ".gitignore").write_text("# mine\n")
+    ext.initialize()
+    assert (ext.config_dir / ".gitignore").read_text() == "# mine\n"
+
+
 def test_alerts_setup_on_a_missing_folder_writes_the_shared_file_and_every_plugin_reads_it(
         meltano_project, monkeypatch):
     ran = []
@@ -319,6 +329,7 @@ def test_alerts_setup_on_a_missing_folder_writes_the_shared_file_and_every_plugi
     shared = (aws.config_dir / "pdt.yml").read_text()
     assert shared.startswith(extension.STARTER.format(plugin="pdt-aws"))
     assert yaml.safe_load(shared) == {"alerts": ALERTS}
+    assert (aws.config_dir / ".gitignore").read_text() == "pdt.yml.lock\n"
     assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
     assert not (aws.config_dir / ".env").exists()
     assert not (meltano_project / "pdt.yml").exists()

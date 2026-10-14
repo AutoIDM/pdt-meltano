@@ -288,6 +288,10 @@ class Pdt(ExtensionBase):
         self.config_dir.mkdir(parents=True, exist_ok=True)
         shared_file.write_text(STARTER.format(plugin=os.environ.get("MELTANO_UTILITY_NAME", "pdt-aws")))
         log("info", f"wrote {shared_file}")
+        # pdt locks pdt.yml with a pdt.yml.lock file beside it and leaves the file there.
+        gitignore = self.config_dir / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text("pdt.yml.lock\n")
 
     def keep_written(self, copy_alerts: bool = True) -> None:
         """Copy the alerts: that pdt wrote into the plugin's pdt project to the shared
