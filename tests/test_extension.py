@@ -77,7 +77,7 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     ext = Pdt()
     names = ext.write_project([Schedule("daily-sync", "daily", ["sync"], ("tap-github", "target-postgres"))])
     assert names == ["daily-sync-prod"]
-    assert ext.stage == meltano_project / ".meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
+    assert ext.stage == meltano_project / ".meltano" / "utilities" / "pdt-aws" / "pdt" / "prod" / "warehouse"
     app = ext.stage / "daily-sync-prod"
     assert (app / "meltano.yml").is_file()
     assert (app / "extract" / "catalog.json").is_file()
@@ -90,7 +90,8 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert "JOB = ['sync']" in run_py
     assert "ENVIRONMENT = 'prod'" in run_py
     compile(run_py, "run.py", "exec")
-    assert "WORKDIR /workspace/daily-sync-prod" in (app / "Dockerfile").read_text()
+    dockerfile = (app / "Dockerfile").read_text()
+    assert "COPY . /warehouse\nWORKDIR /warehouse/daily-sync-prod\nENV PDT_PROJECT=/warehouse " in dockerfile
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "aws", "region": "us-east-2"}}
 
@@ -213,7 +214,8 @@ def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monke
     monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(meltano_project / "state" / "meltano"))
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
-    assert ext.stage == meltano_project / "state" / "meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
+    assert ext.stage == (meltano_project / "state" / "meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
+                         / "warehouse")
     assert not (ext.stage / "daily-sync-prod" / "state" / "meltano").exists()
 
 
@@ -312,7 +314,11 @@ def test_each_environment_has_its_own_project_and_apps(meltano_project, monkeypa
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "prod")
     prod = Pdt()
     prod.write_project([Schedule("hourly", "hourly", ["sync"])])
-    assert dev.stage.parent == prod.stage.parent
+    assert dev.stage.parent.parent == prod.stage.parent.parent
+    from pdt import lifecycle
+    for ext in (dev, prod):
+        monkeypatch.setenv("PDT_PROJECT", str(ext.stage))
+        assert lifecycle.app_params(ext.known_apps()[0], "aws")["project"] == "warehouse"
     assert (dev.known_apps(), prod.known_apps()) == (["daily-sync-dev"], ["hourly-prod"])
     assert prod.deployed() == set()
 
