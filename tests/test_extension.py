@@ -1,5 +1,6 @@
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -229,3 +230,67 @@ def test_the_provider_setting_is_the_plugin_name_and_pdt_gets_its_own_name(melta
     monkeypatch.setenv("PDT_AWS_PROVIDER", "google")
     with pytest.raises(PdtMeltanoError, match="it must be one of aws, azure, gcloud."):
         Pdt().write_project([])
+
+
+ALERTS = [{"type": "slack", "channel": "alerts", "events": ["job:run-failed"]}]
+
+
+def use_plugin(monkeypatch, name, provider):
+    monkeypatch.setenv("MELTANO_UTILITY_NAME", name)
+    monkeypatch.setenv("MELTANO_UTILITY_NAMESPACE", name.replace("-", "_"))
+    monkeypatch.setenv(f"{name.replace('-', '_').upper()}_PROVIDER", provider)
+
+
+def test_alerts_set_up_through_one_plugin_reach_every_plugin(meltano_project, monkeypatch):
+    def alerts_setup(args, env, **kwargs):
+        """Write what `pdt alerts setup` writes, with pdt's own functions."""
+        from dotenv import set_key
+        from pdt import config
+        monkeypatch.setenv("PDT_PROJECT", env["PDT_PROJECT"])
+        config.save_root_alerts(ALERTS)
+        set_key(Path(env["PDT_PROJECT"]) / ".env", "SLACK_WEBHOOK_ALERTS", "https://hooks.slack.com/x",
+                quote_mode="never")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(extension.subprocess, "run", alerts_setup)
+    aws = Pdt()
+    aws.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    aws.pdt("alerts", "setup")
+    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {"alerts": ALERTS}
+    assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
+    assert not (aws.stage / ".env").exists()
+    use_plugin(monkeypatch, "pdt-azure", "azure")
+    azure = Pdt()
+    azure.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    assert yaml.safe_load((azure.stage / "pdt.yml").read_text()) == {
+        "platform": {"provider": "azure"}, "alerts": ALERTS}
+    assert "SLACK_WEBHOOK_ALERTS" in yaml.safe_load(
+        (azure.stage / "daily-sync" / "config.yml").read_text())["env"]["optional"]
+    assert not (azure.stage / "daily-sync" / "pdt.yml").exists()
+    aws.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    assert yaml.safe_load((aws.stage / "pdt.yml").read_text())["alerts"] == ALERTS
+
+
+def test_a_key_removed_from_the_project_pdt_yml_stays_removed(meltano_project, monkeypatch):
+    (meltano_project / "pdt.yml").write_text(yaml.safe_dump({"alerts": ALERTS}))
+    ext = Pdt()
+    ext.write_project([])
+    (meltano_project / "pdt.yml").write_text("{}\n")
+    ext.write_project([])
+    ext.keep_written()
+    assert "alerts" not in yaml.safe_load((ext.stage / "pdt.yml").read_text())
+    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {}
+
+
+def test_what_pdt_wrote_into_an_older_run_folder_moves_to_the_project(meltano_project):
+    ext = Pdt()
+    ext.stage.mkdir(parents=True)
+    (ext.stage / "pdt.yml").write_text(
+        extension.LEGACY_HEADER + "platform:\n  provider: aws\n  account: '123456789012'\n"
+        "alerts:\n  - type: slack\n    channel: alerts\n    events: [job:run-failed]\n")
+    (ext.stage / ".env").write_text("SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x\n")
+    ext.write_project([])
+    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {"alerts": ALERTS}
+    assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
+    assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
+        "platform": {"account": "123456789012", "provider": "aws", "region": "us-east-2"},
+        "alerts": ALERTS}

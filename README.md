@@ -89,6 +89,8 @@ These are the settings that pdt reads:
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
+Settings that are the same for every cloud, such as the `alerts:` list that `meltano invoke pdt-aws alerts setup` writes, live in `pdt.yml` in your Meltano project, next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it, so alerts that you set up through `pdt-aws` also go to `pdt-azure` and `pdt-gcloud`. pdt-meltano copies each such key that pdt writes into this file, and each secret that pdt saves, such as the Slack webhook, into your project's `.env`. Any `platform:` key in this file has no effect: set platform settings with `meltano config`.
+
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
 If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
