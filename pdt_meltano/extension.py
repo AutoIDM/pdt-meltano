@@ -188,8 +188,6 @@ class Pdt(ExtensionBase):
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
         sys_dir = Path(os.environ["MELTANO_SYS_DIR_ROOT"]).resolve()
         self.stage = sys_dir / "utilities" / os.environ["MELTANO_UTILITY_NAME"] / "pdt"
-        # Where older versions wrote the pdt project.
-        self.legacy_stage = sys_dir / "run" / os.environ["MELTANO_UTILITY_NAME"]
         self.left_out = LEFT_OUT + ((sys_dir.name,) if sys_dir.is_relative_to(self.root) else ())
         namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
         values = {name: os.environ.get(f"{namespace}_{name.upper()}", "").strip()
@@ -234,10 +232,6 @@ class Pdt(ExtensionBase):
                 f"the provider setting is {self.provider!r}; it must be one of "
                 f"{', '.join(PROVIDERS)}. Add the plugin from its Meltano Hub entry, "
                 "which sets it for you.")
-        if not self.stage.exists() and (self.legacy_stage / "pdt.yml").is_file():
-            self.stage.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(self.legacy_stage, self.stage)
-            log("info", f"moved the pdt project from {self.legacy_stage} to {self.stage}")
         self.stage.mkdir(parents=True, exist_ok=True)
         project_file = self.stage / "pdt.yml"
         existing = load_yaml(project_file)
