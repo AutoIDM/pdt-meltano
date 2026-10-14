@@ -27,9 +27,23 @@ def test_parse_schedules_keeps_repeating_job_schedules():
     assert [reason.split(":")[0] for reason in skipped] == ["by-hand", "old-style"]
 
 
+def test_parse_schedules_takes_the_plugins_of_each_job():
+    listing = {"schedules": {"job": [{"name": "s", "cron_interval": "@daily", "job": {
+        "name": "j", "tasks": ["tap-a hide-email target-b", ["tap-c", "target-b"], "dbt:run"]}}]}}
+    assert parse_schedules(listing)[0][0].plugins == ("tap-a", "hide-email", "target-b", "tap-c", "dbt")
+
+
 def test_app_name_is_the_schedule_and_environment_as_a_folder_name_pdt_accepts():
     assert app_name("daily-sync", "prod") == "daily-sync-prod"
     assert app_name("Daily_Sync", "Staging EU") == "daily-sync-staging-eu"
+
+
+# What `meltano config print <plugin> --format=env` prints, with the values hidden.
+PLUGIN_ENV = {
+    "tap-github": "TAP_GITHUB_TOKEN='*****'\nMELTANO_EXTRACT_TOKEN='*****'\nTAP_GITHUB_START_DATE=2024-01-01\n",
+    "target-postgres": "TARGET_POSTGRES_PASSWORD='*****'\nMELTANO_LOAD_PASSWORD='*****'\n",
+    "dbt": "DBT_PROFILES_DIR=/x\n",
+}
 
 
 @pytest.fixture
@@ -38,7 +52,7 @@ def meltano_project(tmp_path, monkeypatch):
     (root / "extract").mkdir(parents=True)
     (root / "meltano.yml").write_text("project_id: x\n")
     (root / "extract" / "catalog.json").write_text("{}")
-    (root / ".env").write_text("TAP_SECRET=abc\nTARGET_PASSWORD=def\n")
+    (root / ".env").write_text("TAP_GITHUB_TOKEN=abc\nTARGET_POSTGRES_PASSWORD=def\n")
     (root / ".meltano" / "plugins").mkdir(parents=True)
     monkeypatch.setenv("MELTANO_PROJECT_ROOT", str(root))
     monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(root / ".meltano"))
@@ -49,14 +63,18 @@ def meltano_project(tmp_path, monkeypatch):
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "prod")
 
     def fake_meltano(*args, cwd):
-        return "meltano, version 4.2.0\n" if args == ("--version",) else ""
+        if args == ("--version",):
+            return "meltano, version 4.2.0\n"
+        if args[2:4] == ("config", "print"):
+            return PLUGIN_ENV.get(args[4], "")
+        return ""
     monkeypatch.setattr(extension, "meltano", fake_meltano)
     return root
 
 
 def test_write_project_makes_one_app_per_schedule(meltano_project):
     ext = Pdt()
-    names = ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    names = ext.write_project([Schedule("daily-sync", "daily", ["sync"], ("tap-github", "target-postgres"))])
     assert names == ["daily-sync-prod"]
     assert ext.stage == meltano_project / ".meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
     app = ext.stage / "daily-sync-prod"
@@ -65,7 +83,7 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert not (app / ".env").exists()
     assert not (app / ".meltano").exists()
     assert yaml.safe_load((app / "config.yml").read_text()) == {
-        "schedule": "daily", "env": {"optional": ["TAP_SECRET", "TARGET_PASSWORD"]}}
+        "schedule": "daily", "env": {"optional": ["TAP_GITHUB_TOKEN", "TARGET_POSTGRES_PASSWORD"]}}
     run_py = (app / "run.py").read_text()
     assert '"pdt-cli[apps]==' in run_py and '"meltano==4.2.0"' in run_py
     assert "JOB = ['sync']" in run_py
@@ -74,6 +92,28 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert "WORKDIR /workspace/daily-sync-prod" in (app / "Dockerfile").read_text()
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "aws", "region": "us-east-2"}}
+
+
+def test_each_app_lists_only_the_env_names_its_job_reads(meltano_project, monkeypatch):
+    (meltano_project / "meltano.yml").write_text("project_id: x\nplugins: {extractors: [{name: tap-github, "
+                                                 "config: {org: $GITHUB_ORG, out: '${MELTANO_PROJECT_ROOT}/out'}}]}\n")
+    (meltano_project / ".env").write_text("TAP_GITHUB_TOKEN=a\nTARGET_POSTGRES_PASSWORD=b\nGITHUB_ORG=c\n"
+                                          "AWS_SECRET_ACCESS_KEY=d\nDBT_PROFILES_DIR=\n")
+    monkeypatch.setenv("TAP_GITHUB_START_DATE", "2024-01-01")
+    calls = []
+    fake = extension.meltano
+    monkeypatch.setattr(extension, "meltano", lambda *args, cwd: calls.append(args) or fake(*args, cwd=cwd))
+    ext = Pdt()
+    ext.write_project([Schedule("github", "daily", ["a"], ("tap-github", "target-postgres")),
+                       Schedule("models", "daily", ["b"], ("dbt", "target-postgres"))])
+    optional = {app: yaml.safe_load((ext.stage / app / "config.yml").read_text())["env"]["optional"]
+                for app in ("github-prod", "models-prod")}
+    assert optional == {
+        "github-prod": ["GITHUB_ORG", "TAP_GITHUB_START_DATE", "TAP_GITHUB_TOKEN", "TARGET_POSTGRES_PASSWORD"],
+        "models-prod": ["GITHUB_ORG", "TARGET_POSTGRES_PASSWORD"]}
+    assert sorted(call[4] for call in calls if call[2:4] == ("config", "print")) == [
+        "dbt", "tap-github", "target-postgres"]
+    assert all(call[:2] == ("--environment", "prod") for call in calls if "config" in call)
 
 
 def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monkeypatch):
@@ -101,8 +141,7 @@ def test_write_project_keeps_what_pdt_wrote_into_an_app_config(meltano_project):
     config.write_text(config.read_text() + "pause: true\nenabled: false\n")
     ext.write_project([Schedule("daily-sync", "hourly", ["sync"])])
     assert yaml.safe_load(config.read_text()) == {
-        "schedule": "hourly", "env": {"optional": ["TAP_SECRET", "TARGET_PASSWORD"]},
-        "enabled": False, "pause": True}
+        "schedule": "hourly", "env": {"optional": []}, "enabled": False, "pause": True}
 
 
 def test_only_the_declared_settings_go_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
@@ -374,8 +413,9 @@ def test_alerts_setup_on_a_missing_folder_writes_the_shared_file_and_every_plugi
     azure.write_project([Schedule("daily-sync", "daily", ["sync"])])
     assert yaml.safe_load((azure.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "azure"}, "alerts": ALERTS}
-    assert "SLACK_WEBHOOK_ALERTS" in yaml.safe_load(
-        (azure.stage / "daily-sync-prod" / "config.yml").read_text())["env"]["optional"]
+    from pdt import config
+    monkeypatch.setenv("PDT_PROJECT", str(azure.stage))
+    assert "SLACK_WEBHOOK_ALERTS" in config.env_spec(config.merged_app("daily-sync-prod"))["required"]
     assert not (azure.stage / "daily-sync-prod" / "pdt.yml").exists()
 
 

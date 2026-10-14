@@ -42,7 +42,7 @@ Then deploy:
 meltano invoke pdt-aws deploy
 ```
 
-`deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Every value in your project's `.env` goes to the cloud job as a secret, so when you change a value, deploy again.
+`deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Each cloud job gets, as a secret, only the env vars that its job reads: the setting env vars of the job's plugins, such as `TAP_GITHUB_AUTH_TOKEN`, and each `$NAME` or `${NAME}` that `meltano.yml` names. A name goes only when your project's `.env` or your shell gives it a value. Other values in `.env`, such as your own cloud keys, stay on your computer. The plan shows the names, for example `env vars TAP_GITHUB_AUTH_TOKEN, TARGET_POSTGRES_PASSWORD`, and never a value. When you change a value, deploy again.
 
 A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltano leaves it out and tells you why. So does a schedule that runs `meltano elt` instead of a job.
 

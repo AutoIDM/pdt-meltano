@@ -6,7 +6,8 @@ project in .meltano/utilities/<plugin name>/pdt/<environment>/, then runs
 pdt on it. Each Meltano environment has its own project, and each app is
 named <schedule>-<environment>, so dev and prod deploy as separate jobs
 with separate state. The user names schedules in every command, and
-pdt-meltano gives pdt the app of the active environment. `meltano install` empties the run folder Meltano gives the plugin,
+pdt-meltano gives pdt the app of the active environment. `meltano
+install` empties the run folder Meltano gives the plugin,
 .meltano/run/<plugin name>/, but keeps this folder, so what pdt writes
 there lasts: the deployed list, and the keys pdt saves on a deploy. Each
 app folder is a copy of the Meltano project plus three generated files:
@@ -18,6 +19,12 @@ A cloud job starts from a new container each time, so run.py keeps the
 Meltano system database, which holds each extractor's state, in the
 app's pdt storage folder: it pulls the database before the run and
 pushes it after, under pdt's storage lock.
+
+The image holds no .env. A deploy sends the job the env values it reads as
+the app's cloud secret: the setting env names of the job's plugins, from
+`meltano config print --format=env`, and each $NAME that meltano.yml
+names, when .env or the shell gives it a value. config.yml lists them
+under env: optional:. pdt adds the alert webhooks itself.
 
 Every setting of the Hub entries goes under platform: in pdt.yml, so pdt
 checks it. Another env var with the plugin's prefix does not. The provider
@@ -45,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -161,6 +169,15 @@ class Schedule:
     name: str
     cron: str
     job: list[str]
+    plugins: tuple[str, ...] = ()
+
+
+def task_plugins(tasks: list) -> tuple[str, ...]:
+    """The plugins a job's tasks run: each name of a `tap mapping target` block, without
+    the `:command` of a `plugin:command` task."""
+    blocks = [block for task in tasks
+              for block in (task_plugins(task) if isinstance(task, list) else task.split())]
+    return tuple(dict.fromkeys(block.split(":")[0] for block in blocks))
 
 
 def meltano(*args: str, cwd: Path) -> str:
@@ -178,7 +195,8 @@ def parse_schedules(listing: dict) -> tuple[list[Schedule], list[str]]:
         if interval in ("", "@once", "@manual"):
             skipped.append(f"{item['name']}: it has no repeating interval ({interval or 'none'})")
             continue
-        found.append(Schedule(item["name"], SHORTHAND.get(interval, interval), [item["job"]["name"]]))
+        found.append(Schedule(item["name"], SHORTHAND.get(interval, interval), [item["job"]["name"]],
+                              task_plugins(item["job"].get("tasks") or [])))
     for item in listing["schedules"].get("elt", []):
         skipped.append(f"{item['name']}: it runs `meltano elt`; make it a job schedule "
                        "(`meltano job add`, then `meltano schedule add --job`)")
@@ -260,7 +278,7 @@ class Pdt(ExtensionBase):
             f"# {self.config_dir / 'pdt.yml'}. pdt-meltano copies alerts: that pdt\n"
             "# writes here to that file.\n"
             + yaml.safe_dump({"platform": platform, **shared}, sort_keys=False))
-        env_names = sorted(dotenv_values(self.root / ".env")) if (self.root / ".env").is_file() else []
+        env_names = self.env_names(schedules)
         versions = {"pdt": importlib.metadata.version("pdt-cli"),
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
         names = []
@@ -277,7 +295,8 @@ class Pdt(ExtensionBase):
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
             config.write_text(yaml.safe_dump(
-                {"schedule": schedule.cron, "env": {"optional": env_names}, **kept}, sort_keys=False))
+                {"schedule": schedule.cron, "env": {"optional": env_names[schedule.name]}, **kept},
+                sort_keys=False))
             names.append(name)
         deployed = self.deployed()
         for folder in self.stage.iterdir():
@@ -314,6 +333,28 @@ class Pdt(ExtensionBase):
                 "its own jobs. Set `default_environment` in meltano.yml, or run the command with "
                 "`meltano --environment <name>`.")
         return self.write_project(self.schedules())
+
+    def env_names(self, schedules: list[Schedule]) -> dict[str, list[str]]:
+        """For each schedule, the env names its job reads that have a value in .env or in the
+        shell: the setting env names of the job's plugins, and each $NAME in meltano.yml.
+        Meltano sets the MELTANO_ names in the job itself, so they stay out."""
+        plugins = sorted({plugin for schedule in schedules for plugin in schedule.plugins})
+        # One Meltano call for each plugin, at the same time, because each takes seconds.
+        with ThreadPoolExecutor() as pool:
+            settings = dict(zip(plugins, pool.map(self.setting_env_names, plugins)))
+        referenced = set(re.findall(r"\$\{?([A-Za-z_]\w*)", (self.root / "meltano.yml").read_text()))
+        env_file = self.root / ".env"
+        values = {**(dotenv_values(env_file) if env_file.is_file() else {}), **os.environ}
+        have = {name for name, value in values.items() if value and not name.startswith("MELTANO_")}
+        return {schedule.name: sorted(have & referenced.union(*map(settings.get, schedule.plugins)))
+                for schedule in schedules}
+
+    def setting_env_names(self, plugin: str) -> set[str]:
+        """The env names of the plugin's settings that have a value. Meltano hides each
+        sensitive value, and only the names are kept."""
+        out = meltano("--environment", self.environment, "config", "print", plugin, "--format=env",
+                      cwd=self.root)
+        return set(re.findall(r"^([A-Za-z_]\w*)=", out, re.MULTILINE))
 
     def schedule_of(self, app: str) -> str:
         return app.removesuffix(f"-{folder_name(self.environment)}")
