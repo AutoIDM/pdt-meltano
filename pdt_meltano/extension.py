@@ -2,11 +2,13 @@
 
 pdt deploys an app: a folder holding run.py, next to a pdt.yml. This
 extension writes one such app for each Meltano schedule into a pdt
-project in the run folder Meltano gives the plugin,
-.meltano/run/<plugin name>/, then runs pdt on it. Each app folder is a
-copy of the Meltano project plus three generated files: run.py, which
-runs the schedule's job; config.yml, which holds its cron; and a
-Dockerfile, which installs the schedule's plugins when the image is
+project in .meltano/utilities/<plugin name>/pdt/, then runs pdt on it.
+`meltano install` empties the run folder Meltano gives the plugin,
+.meltano/run/<plugin name>/, but keeps this folder, so what pdt writes
+there lasts: the deployed list, and the keys pdt saves on a deploy. Each
+app folder is a copy of the Meltano project plus three generated files:
+run.py, which runs the schedule's job; config.yml, which holds its cron;
+and a Dockerfile, which installs the schedule's plugins when the image is
 built.
 
 A cloud job starts from a new container each time, so run.py keeps the
@@ -20,8 +22,8 @@ default setting value); the user sets the others with `meltano config`.
 
 Every other key of pdt.yml, such as alerts:, is the same for each cloud, so it
 lives in pdt.yml in the Meltano project, which every pdt plugin of the
-project reads. When pdt writes such a key into the run folder's pdt.yml, or
-a value into the run folder's .env, pdt-meltano moves it to pdt.yml or .env
+project reads. When pdt writes such a key into the pdt project's pdt.yml, or
+a value into the pdt project's .env, pdt-meltano moves it to pdt.yml or .env
 in the Meltano project after pdt exits.
 """
 
@@ -52,7 +54,7 @@ LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__"
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
 # pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
 APP_WRITTEN_BACK = ("enabled", "pause")
-# The first line of the run folder's pdt.yml before it took keys from the
+# The first line of the pdt project's pdt.yml before it took keys from the
 # Meltano project's pdt.yml. Such a folder can hold keys pdt wrote, so they move once.
 LEGACY_HEADER = "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
@@ -169,7 +171,9 @@ class Pdt(ExtensionBase):
     def __init__(self) -> None:
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
         sys_dir = Path(os.environ["MELTANO_SYS_DIR_ROOT"]).resolve()
-        self.stage = sys_dir / "run" / os.environ["MELTANO_UTILITY_NAME"]
+        self.stage = sys_dir / "utilities" / os.environ["MELTANO_UTILITY_NAME"] / "pdt"
+        # Where older versions wrote the pdt project.
+        self.legacy_stage = sys_dir / "run" / os.environ["MELTANO_UTILITY_NAME"]
         self.left_out = LEFT_OUT + ((sys_dir.name,) if sys_dir.is_relative_to(self.root) else ())
         prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
         self.settings = {key[len(prefix):].lower(): value.strip()
@@ -213,6 +217,10 @@ class Pdt(ExtensionBase):
                 f"the provider setting is {self.provider!r}; it must be one of "
                 f"{', '.join(PROVIDERS)}. Add the plugin from its Meltano Hub entry, "
                 "which sets it for you.")
+        if not self.stage.exists() and (self.legacy_stage / "pdt.yml").is_file():
+            self.stage.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(self.legacy_stage, self.stage)
+            log("info", f"moved the pdt project from {self.legacy_stage} to {self.stage}")
         self.stage.mkdir(parents=True, exist_ok=True)
         project_file = self.stage / "pdt.yml"
         if project_file.is_file() and project_file.read_text().startswith(LEGACY_HEADER):
@@ -263,7 +271,7 @@ class Pdt(ExtensionBase):
         return names
 
     def keep_written(self) -> None:
-        """Move what pdt wrote into the run folder to the Meltano project: each key
+        """Move what pdt wrote into the pdt project to the Meltano project: each key
         of pdt.yml other than platform: that differs from the project's pdt.yml,
         and each value in .env. Every pdt plugin of the project then reads them."""
         root_file = self.root / "pdt.yml"
