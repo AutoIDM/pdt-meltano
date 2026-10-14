@@ -22,10 +22,13 @@ comes from the Meltano Hub entry the user added (a default setting value);
 the user sets the others with `meltano config`.
 
 Every other key of pdt.yml, such as alerts:, is the same for each cloud, so it
-lives in pdt.yml in the Meltano project, which every pdt plugin of the
-project reads. When pdt writes such a key into the pdt project's pdt.yml, or
-a value into the pdt project's .env, pdt-meltano moves it to pdt.yml or .env
-in the Meltano project after pdt exits.
+lives in <config_dir>/pdt.yml, by default orchestrate/pdt/pdt.yml in the
+Meltano project. Every pdt plugin of the project reads it. `alerts setup` and
+`alerts test` run pdt on that folder, so pdt edits the file itself and keeps
+its comments. When a deploy's alerts offer writes alerts: into the plugin's
+pdt project, pdt-meltano copies them to the shared file with pdt's own edit.
+A value that pdt writes into a .env in either folder moves to .env in the
+Meltano project after pdt exits.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ import yaml
 from dotenv import dotenv_values, set_key
 from meltano.edk import models
 from meltano.edk.extension import DescribeFormat, ExtensionBase
+from pdt import config as pdt_config
 from pdt.deploy_common import BASE_IMAGE
 
 # The provider setting of each Hub entry, and the pdt provider it names.
@@ -58,9 +62,6 @@ SETTINGS = ("provider", "region", "timezone", "account", "profile", "subscriptio
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
 # pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
 APP_WRITTEN_BACK = ("enabled", "pause")
-# The first line of the pdt project's pdt.yml before it took keys from the
-# Meltano project's pdt.yml. Such a folder can hold keys pdt wrote, so they move once.
-LEGACY_HEADER = "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -96,6 +97,17 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 '''
+
+STARTER = """\
+# pdt settings that every pdt plugin of this Meltano project reads, such as alerts:.
+# pdt-meltano writes platform: from the plugin settings in meltano.yml, so leave it out.
+# Run `meltano invoke {plugin} alerts setup` to add alerts:, or write them here:
+#
+# alerts:
+#   - type: slack
+#     channel: it-alerts
+#     events: [app:deploy-completed, app:deploy-failed, job:run-failed]
+"""
 
 DOCKERFILE = f"FROM {BASE_IMAGE}\n" + """\
 RUN apt-get update && apt-get install -y --no-install-recommends git \\
@@ -184,6 +196,8 @@ class Pdt(ExtensionBase):
                   for name in SETTINGS} if namespace else {}
         self.settings = {name: value for name, value in values.items() if value}
         self.provider = self.settings.get("provider", "")
+        config_dir = os.environ.get(f"{namespace}_CONFIG_DIR", "").strip() if namespace else ""
+        self.config_dir = (self.root / (config_dir or "orchestrate/pdt")).resolve()
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 
     def describe(self) -> models.Describe:
@@ -226,20 +240,18 @@ class Pdt(ExtensionBase):
             log("info", f"moved the pdt project from {self.legacy_stage} to {self.stage}")
         self.stage.mkdir(parents=True, exist_ok=True)
         project_file = self.stage / "pdt.yml"
-        if project_file.is_file() and project_file.read_text().startswith(LEGACY_HEADER):
-            self.keep_written()
         existing = load_yaml(project_file)
         platform = existing.get("platform") or {}
         if platform.get("provider") != provider:
             platform = {}
         platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
                     **self.settings, "provider": provider}
-        shared = {key: value for key, value in load_yaml(self.root / "pdt.yml").items()
+        shared = {key: value for key, value in load_yaml(self.config_dir / "pdt.yml").items()
                   if key != "platform"}
         project_file.write_text(
             "# Written by pdt-meltano from the plugin settings in meltano.yml and from\n"
-            "# pdt.yml in the Meltano project. pdt-meltano moves what pdt writes here to\n"
-            "# those files.\n"
+            f"# {self.config_dir / 'pdt.yml'}. pdt-meltano copies alerts: that pdt\n"
+            "# writes here to that file.\n"
             + yaml.safe_dump({"platform": platform, **shared}, sort_keys=False))
         env_names = sorted(dotenv_values(self.root / ".env")) if (self.root / ".env").is_file() else []
         versions = {"pdt": importlib.metadata.version("pdt-cli"),
@@ -273,31 +285,53 @@ class Pdt(ExtensionBase):
                 shutil.rmtree(folder)
         return names
 
-    def keep_written(self) -> None:
-        """Move what pdt wrote into the pdt project to the Meltano project: each key
-        of pdt.yml other than platform: that differs from the project's pdt.yml,
-        and each value in .env. Every pdt plugin of the project then reads them."""
-        root_file = self.root / "pdt.yml"
-        shared = load_yaml(root_file)
-        written = {key: value for key, value in load_yaml(self.stage / "pdt.yml").items()
-                   if key != "platform" and shared.get(key) != value}
-        if written:
-            root_file.write_text(yaml.safe_dump({**shared, **written}, sort_keys=False))
-            log("info", f"saved {', '.join(written)} in pdt.yml in the Meltano project")
-        env_file = self.stage / ".env"
-        values = {key: value for key, value in dotenv_values(env_file).items()
-                  if value is not None} if env_file.is_file() else {}
-        if values:
-            (self.root / ".env").touch(mode=0o600)
-            for key, value in values.items():
-                set_key(self.root / ".env", key, value, quote_mode="never")
-            log("info", f"saved {', '.join(values)} in .env in the Meltano project")
-        env_file.unlink(missing_ok=True)
+    def initialize(self, force: bool = False) -> None:
+        """Write a starter <config_dir>/pdt.yml, unless the file exists."""
+        shared_file = self.config_dir / "pdt.yml"
+        if shared_file.is_file():
+            log("info", f"{shared_file} exists, so it stays as it is")
+            return
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        shared_file.write_text(STARTER.format(plugin=os.environ.get("MELTANO_UTILITY_NAME", "pdt-aws")))
+        log("info", f"wrote {shared_file}")
+
+    def keep_written(self, copy_alerts: bool = True) -> None:
+        """Copy the alerts: that pdt wrote into the plugin's pdt project to the shared
+        pdt.yml, and move each value pdt wrote into a .env of either folder to .env in
+        the Meltano project. Every pdt plugin of the project then reads them."""
+        alerts = load_yaml(self.stage / "pdt.yml").get("alerts") if copy_alerts else None
+        if alerts is not None and alerts != load_yaml(self.config_dir / "pdt.yml").get("alerts"):
+            if not (self.config_dir / "pdt.yml").is_file():
+                self.initialize()
+            saved = os.environ.get("PDT_PROJECT")
+            os.environ["PDT_PROJECT"] = str(self.config_dir)
+            try:
+                pdt_config.save_root_alerts(alerts)
+            finally:
+                if saved is None:
+                    os.environ.pop("PDT_PROJECT")
+                else:
+                    os.environ["PDT_PROJECT"] = saved
+            log("info", f"saved alerts in {self.config_dir / 'pdt.yml'}")
+        for env_file in (self.stage / ".env", self.config_dir / ".env"):
+            values = {key: value for key, value in dotenv_values(env_file).items()
+                      if value is not None} if env_file.is_file() else {}
+            if values:
+                (self.root / ".env").touch(mode=0o600)
+                for key, value in values.items():
+                    set_key(self.root / ".env", key, value, quote_mode="never")
+                log("info", f"saved {', '.join(values)} in .env in the Meltano project")
+            env_file.unlink(missing_ok=True)
 
     def pdt(self, *args: str) -> int:
+        # The shared pdt.yml holds alerts:, so pdt edits it there and keeps its comments.
+        if args[:2] == ("alerts", "setup") and not (self.config_dir / "pdt.yml").is_file():
+            self.initialize()
+        shared = args[:1] == ("alerts",) and (self.config_dir / "pdt.yml").is_file()
+        project = self.config_dir if shared else self.stage
         env = {**os.environ, **{key: value for key, value in dotenv_values(self.root / ".env").items()
                                 if value is not None and key not in os.environ},
-               "PDT_PROJECT": str(self.stage)}
+               "PDT_PROJECT": str(project)}
         # Meltano shows a utility's stderr one line at a time, so a prompt with no
         # newline would not show. pdt's stderr goes to the terminal instead.
         stderr = sys.stdout if sys.stdout.isatty() else None
@@ -305,7 +339,7 @@ class Pdt(ExtensionBase):
             return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env,
                                   stderr=stderr).returncode
         finally:
-            self.keep_written()
+            self.keep_written(copy_alerts=project == self.stage)
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
         """Run a pdt command on the named schedules, or on every one.

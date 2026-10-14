@@ -44,8 +44,9 @@ def describe(output_format: DescribeFormat = typer.Option(DescribeFormat.text, "
 
 
 @app.command()
-def initialize(force: bool = typer.Option(False, help="ignored")) -> None:
-    """Nothing to set up; deploy writes what it needs."""
+def initialize(force: bool = typer.Option(False, help="ignored; an existing pdt.yml stays")) -> None:
+    """Write a starter pdt.yml in the config_dir folder, unless one exists."""
+    Pdt().initialize(force)
 
 
 def main() -> None:

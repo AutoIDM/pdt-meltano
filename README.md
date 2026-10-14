@@ -58,7 +58,7 @@ Commands take schedule names, the same names that `meltano schedule list` shows.
 | `<pdt-command>...`                     | run any other pdt command, such as `list` or `validate` |
 | `--help`                               | list all pdt commands                                   |
 | `describe [--format <format>]`         | list the commands of pdt-meltano                        |
-| `initialize`                           | does nothing, because deploy writes what it needs       |
+| `initialize`                           | write a starter shared `pdt.yml` if none exists         |
 
 
 `--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The `<format>` of `describe` is `text`, `json`, or `yaml`.
@@ -85,7 +85,28 @@ These are the settings that pdt reads:
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
-Settings that are the same for every cloud, such as `alerts:`, live in `pdt.yml` next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it.
+Settings that are the same for every cloud, such as `alerts:`, live in `orchestrate/pdt/pdt.yml`. Every pdt plugin of the project reads this file. Commit it. The `config_dir` setting names its folder, and the default is `$MELTANO_PROJECT_ROOT/orchestrate/pdt`. `config_dir` does not go under `platform:`.
+
+`meltano invoke pdt-aws initialize` writes a starter file with a commented `alerts:` example. It does not replace a file that exists. `meltano invoke pdt-aws alerts setup` writes `alerts:` into the file and keeps your comments. It makes the folder and the file first if they do not exist. pdt-meltano then moves the webhook from `orchestrate/pdt/.env` to the `.env` of your project.
+
+Every Meltano environment uses the same folder. To give one environment its own file, set `config_dir` for that environment in `meltano.yml`. Each pdt plugin has its own `config_dir` setting, so the override names each plugin:
+
+```yaml
+environments:
+- name: dev            # no entry: every pdt plugin reads orchestrate/pdt/pdt.yml
+- name: prod
+  config:
+    plugins:
+      utilities:
+      - name: pdt-aws
+        config:
+          config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod
+      - name: pdt-azure
+        config:
+          config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod
+```
+
+An `env:` value for the environment does not change `config_dir`. Meltano reads the setting from `config:`.
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 

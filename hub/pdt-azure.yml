@@ -66,4 +66,9 @@ settings:
   kind: string
   label: Google Cloud Project
   name: project
+- description: The folder of the pdt.yml that every pdt plugin of the project reads, for settings such as alerts:. Each Meltano environment uses the same folder unless you set this for the environment.
+  kind: string
+  label: Config Folder
+  name: config_dir
+  value: $MELTANO_PROJECT_ROOT/orchestrate/pdt
 variant: autoidm

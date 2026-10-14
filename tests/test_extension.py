@@ -141,9 +141,10 @@ def test_the_hub_entries_and_the_readme_name_the_settings_the_extension_reads():
     readme = (repo / "README.md").read_text()
     for entry in sorted((repo / "hub").glob("*.yml")):
         settings = yaml.safe_load(entry.read_text())["settings"]
-        assert tuple(setting["name"] for setting in settings) == extension.SETTINGS, entry.name
+        assert tuple(setting["name"] for setting in settings) == (*extension.SETTINGS, "config_dir"), entry.name
         assert all({"label", "description", "kind"} <= set(setting) for setting in settings), entry.name
     assert all(f"| `{name}`" in readme for name in extension.SETTINGS)
+    assert "`config_dir`" in readme and "config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod" in readme
     assert set(extension.SETTINGS) == PLATFORM_KEYS
 
 
@@ -274,23 +275,73 @@ def use_plugin(monkeypatch, name, provider):
     monkeypatch.setenv(f"{name.replace('-', '_').upper()}_PROVIDER", provider)
 
 
-def test_alerts_set_up_through_one_plugin_reach_every_plugin(meltano_project, monkeypatch):
-    def alerts_setup(args, env, **kwargs):
-        """Write what `pdt alerts setup` writes, with pdt's own functions."""
+def fake_pdt_alerts(monkeypatch, alerts, ran=None):
+    """Write what `pdt alerts setup` or a deploy's alerts offer writes, with pdt's own functions."""
+    def run(args, env, **kwargs):
         from dotenv import set_key
         from pdt import config
+        if ran is not None:
+            ran.append(env["PDT_PROJECT"])
         monkeypatch.setenv("PDT_PROJECT", env["PDT_PROJECT"])
-        config.save_root_alerts(ALERTS)
+        config.save_root_alerts(alerts)
         set_key(Path(env["PDT_PROJECT"]) / ".env", "SLACK_WEBHOOK_ALERTS", "https://hooks.slack.com/x",
                 quote_mode="never")
         return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(extension.subprocess, "run", alerts_setup)
+    monkeypatch.setattr(extension.subprocess, "run", run)
+
+
+def test_config_dir_defaults_to_orchestrate_pdt_and_stays_out_of_platform(meltano_project, monkeypatch):
+    assert Pdt().config_dir == meltano_project / "orchestrate" / "pdt"
+    monkeypatch.setenv("PDT_AWS_CONFIG_DIR", "orchestrate/pdt-prod")
+    assert Pdt().config_dir == meltano_project / "orchestrate" / "pdt-prod"
+    monkeypatch.setenv("PDT_AWS_CONFIG_DIR", str(meltano_project / "shared"))
+    ext = Pdt()
+    assert ext.config_dir == meltano_project / "shared"
+    ext.write_project([])
+    assert "config_dir" not in yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"]
+
+
+def test_the_shared_keys_come_from_the_config_dir_only(meltano_project):
+    (meltano_project / "orchestrate" / "pdt").mkdir(parents=True)
+    (meltano_project / "orchestrate" / "pdt" / "pdt.yml").write_text(
+        "# shared\nalerts:\n  - type: slack\n    channel: alerts\n    events: [job:run-failed]\n"
+        "platform:\n  provider: azure\n")
+    (meltano_project / "pdt.yml").write_text("docker-build: cloud\n")
+    ext = Pdt()
+    ext.write_project([])
+    assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
+        "platform": {"provider": "aws", "region": "us-east-2"}, "alerts": ALERTS}
+
+
+def test_initialize_writes_a_starter_pdt_yml_once(meltano_project):
+    ext = Pdt()
+    ext.initialize()
+    shared = ext.config_dir / "pdt.yml"
+    assert yaml.safe_load(shared.read_text()) is None
+    assert "meltano invoke pdt-aws alerts setup" in shared.read_text()
+    assert "# alerts:\n#   - type: slack\n" in shared.read_text()
+    shared.write_text("# mine\n")
+    ext.initialize()
+    assert shared.read_text() == "# mine\n"
+
+
+def test_alerts_setup_on_a_missing_folder_writes_the_shared_file_and_every_plugin_reads_it(
+        meltano_project, monkeypatch):
+    ran = []
+    fake_pdt_alerts(monkeypatch, [], ran)
     aws = Pdt()
     aws.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    aws.pdt("alerts", "--help")
+    assert not aws.config_dir.exists()
+    fake_pdt_alerts(monkeypatch, ALERTS, ran)
     aws.pdt("alerts", "setup")
-    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {"alerts": ALERTS}
+    assert ran == [str(aws.stage), str(aws.config_dir)]
+    shared = (aws.config_dir / "pdt.yml").read_text()
+    assert shared.startswith(extension.STARTER.format(plugin="pdt-aws"))
+    assert yaml.safe_load(shared) == {"alerts": ALERTS}
     assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
-    assert not (aws.stage / ".env").exists()
+    assert not (aws.config_dir / ".env").exists()
+    assert not (meltano_project / "pdt.yml").exists()
     use_plugin(monkeypatch, "pdt-azure", "azure")
     azure = Pdt()
     azure.write_project([Schedule("daily-sync", "daily", ["sync"])])
@@ -299,31 +350,46 @@ def test_alerts_set_up_through_one_plugin_reach_every_plugin(meltano_project, mo
     assert "SLACK_WEBHOOK_ALERTS" in yaml.safe_load(
         (azure.stage / "daily-sync" / "config.yml").read_text())["env"]["optional"]
     assert not (azure.stage / "daily-sync" / "pdt.yml").exists()
-    aws.write_project([Schedule("daily-sync", "daily", ["sync"])])
-    assert yaml.safe_load((aws.stage / "pdt.yml").read_text())["alerts"] == ALERTS
 
 
-def test_a_key_removed_from_the_project_pdt_yml_stays_removed(meltano_project, monkeypatch):
-    (meltano_project / "pdt.yml").write_text(yaml.safe_dump({"alerts": ALERTS}))
+def test_alerts_setup_replaces_the_alerts_and_keeps_comments(meltano_project, monkeypatch):
+    new = [{"type": "slack", "channel": "it-alerts", "events": ["job:run-failed"]}]
+    (meltano_project / "orchestrate" / "pdt").mkdir(parents=True)
+    shared = meltano_project / "orchestrate" / "pdt" / "pdt.yml"
+    shared.write_text("# our alerts\nalerts:\n  - type: slack\n    channel: alerts\n"
+                      "    events: [job:run-failed]  # old\n\n# the build\ndocker-build: cloud\n")
+    fake_pdt_alerts(monkeypatch, new)
     ext = Pdt()
     ext.write_project([])
-    (meltano_project / "pdt.yml").write_text("{}\n")
+    ext.pdt("alerts", "setup")
+    assert yaml.safe_load(shared.read_text()) == {"alerts": new, "docker-build": "cloud"}
+    assert "# our alerts\n" in shared.read_text() and "# the build\n" in shared.read_text()
+
+
+def test_alerts_from_a_deploy_offer_reach_the_shared_file_with_comments_kept(meltano_project, monkeypatch):
+    (meltano_project / "orchestrate" / "pdt").mkdir(parents=True)
+    shared = meltano_project / "orchestrate" / "pdt" / "pdt.yml"
+    shared.write_text("# the build\ndocker-build: cloud\n")
+    ran = []
+    fake_pdt_alerts(monkeypatch, ALERTS, ran)
+    ext = Pdt()
+    ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    ext.pdt("deploy", "daily-sync")
+    assert ran == [str(ext.stage)]
+    assert yaml.safe_load(shared.read_text()) == {"docker-build": "cloud", "alerts": ALERTS}
+    assert shared.read_text().startswith("# the build\n")
+    assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
+    assert not (ext.stage / ".env").exists()
+
+
+def test_alerts_removed_from_the_shared_pdt_yml_stay_removed(meltano_project):
+    (meltano_project / "orchestrate" / "pdt").mkdir(parents=True)
+    shared = meltano_project / "orchestrate" / "pdt" / "pdt.yml"
+    shared.write_text(yaml.safe_dump({"alerts": ALERTS}))
+    ext = Pdt()
+    ext.write_project([])
+    shared.write_text("# none\n")
     ext.write_project([])
     ext.keep_written()
     assert "alerts" not in yaml.safe_load((ext.stage / "pdt.yml").read_text())
-    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {}
-
-
-def test_what_pdt_wrote_into_an_older_run_folder_moves_to_the_project(meltano_project):
-    ext = Pdt()
-    ext.stage.mkdir(parents=True)
-    (ext.stage / "pdt.yml").write_text(
-        extension.LEGACY_HEADER + "platform:\n  provider: aws\n  account: '123456789012'\n"
-        "alerts:\n  - type: slack\n    channel: alerts\n    events: [job:run-failed]\n")
-    (ext.stage / ".env").write_text("SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x\n")
-    ext.write_project([])
-    assert yaml.safe_load((meltano_project / "pdt.yml").read_text()) == {"alerts": ALERTS}
-    assert "SLACK_WEBHOOK_ALERTS=https://hooks.slack.com/x" in (meltano_project / ".env").read_text()
-    assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
-        "platform": {"account": "123456789012", "provider": "aws", "region": "us-east-2"},
-        "alerts": ALERTS}
+    assert shared.read_text() == "# none\n"
