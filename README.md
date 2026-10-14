@@ -44,10 +44,6 @@ meltano invoke pdt-aws deploy
 
 `deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Every value in your project's `.env` goes to the cloud job as a secret, so when you change a value, deploy again.
 
-`deploy` builds the container image with Docker on this computer when Docker works. Otherwise it builds the image in the cloud: with CodeBuild on AWS, ACR Tasks on Azure, or Cloud Build on Google Cloud. You do not need to install Docker.
-
-When a schedule has no successful run yet, `deploy` then asks `Start a run now and show its log? [y/N]`. A run loads data, the same as a run on the schedule. Press Enter to skip it. With `--yes`, `deploy` does not ask and starts no run.
-
 A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltano leaves it out and tells you why. So does a schedule that runs `meltano elt` instead of a job.
 
 ## Commands
@@ -89,7 +85,7 @@ These are the settings that pdt reads:
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
-Settings that are the same for every cloud, such as the `alerts:` list that `meltano invoke pdt-aws alerts setup` writes, live in `pdt.yml` in your Meltano project, next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it, so alerts that you set up through `pdt-aws` also go to `pdt-azure` and `pdt-gcloud`. pdt-meltano copies each such key that pdt writes into this file, and each secret that pdt saves, such as the Slack webhook, into your project's `.env`. Any `platform:` key in this file has no effect: set platform settings with `meltano config`.
+Settings that are the same for every cloud, such as `alerts:`, live in `pdt.yml` next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it.
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
