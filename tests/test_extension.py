@@ -76,7 +76,6 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
         "platform": {"provider": "aws", "region": "us-east-2"}}
 
 
-
 def test_a_pdt_project_in_the_run_folder_moves_once(meltano_project):
     ext = Pdt()
     old = meltano_project / ".meltano" / "run" / "pdt-aws"
@@ -95,6 +94,7 @@ def test_a_pdt_project_in_the_run_folder_moves_once(meltano_project):
     ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
     assert (old / "pdt.yml").is_file()
     assert ext.deployed() == {"daily-sync"}
+
 
 def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monkeypatch):
     monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(meltano_project / "state" / "meltano"))
