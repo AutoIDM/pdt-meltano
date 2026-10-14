@@ -108,7 +108,7 @@ environments:
           config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod
 ```
 
-An `env:` value for the environment does not change `config_dir`. Meltano reads the setting from `config:`.
+An `env:` entry for the environment, such as `PDT_AWS_CONFIG_DIR: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod`, also changes `config_dir`, for that one plugin.
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 

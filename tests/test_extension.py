@@ -67,6 +67,10 @@ def meltano_project(tmp_path, monkeypatch):
         if args == ("--version",):
             return "meltano, version 4.2.0\n"
         if args[2:4] == ("config", "print"):
+            if args[4] in ("tap-empty", "tap-broken") and args[5] == "--format=env":
+                raise PdtMeltanoError("`meltano config print` failed:\nFileNotFoundError")
+            if args[5] == "--format=json":
+                return '{"token": "*****"}\n' if args[4] == "tap-broken" else "{}\n"
             return PLUGIN_ENV.get(args[4], "")
         return ""
     monkeypatch.setattr(extension, "meltano", fake_meltano)
@@ -144,6 +148,24 @@ environments:
       extractors:
       - {name: tap-child, config: {host: $DEV_HOST}}
 """
+
+
+def test_a_plugin_with_no_setting_values_adds_no_name(meltano_project):
+    ext = Pdt()
+    ext.write_project([Schedule("empty", "daily", ["e"], ("tap-empty", "target-postgres"))])
+    assert yaml.safe_load((ext.stage / "empty-prod" / "config.yml").read_text())["env"] == {
+        "optional": ["TARGET_POSTGRES_PASSWORD"]}
+    with pytest.raises(PdtMeltanoError, match="FileNotFoundError"):
+        ext.setting_env_names("tap-broken")
+
+
+def test_a_hand_made_shared_pdt_yml_gets_the_lock_gitignore(meltano_project, monkeypatch):
+    fake_pdt_alerts(monkeypatch, ALERTS)
+    ext = Pdt()
+    ext.config_dir.mkdir(parents=True)
+    (ext.config_dir / "pdt.yml").write_text("# mine\n")
+    ext.pdt("alerts", "setup")
+    assert (ext.config_dir / ".gitignore").read_text() == "pdt.yml.lock\n"
 
 
 def test_names_come_only_from_the_blocks_of_the_job_plugins(meltano_project):

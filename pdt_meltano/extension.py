@@ -335,7 +335,11 @@ class Pdt(ExtensionBase):
         self.config_dir.mkdir(parents=True, exist_ok=True)
         shared_file.write_text(STARTER.format(plugin=os.environ.get("MELTANO_UTILITY_NAME", "pdt-aws")))
         log("info", f"wrote {shared_file}")
-        # pdt locks pdt.yml with a pdt.yml.lock file beside it and leaves the file there.
+        self.ignore_lock()
+
+    def ignore_lock(self) -> None:
+        """pdt locks pdt.yml with a pdt.yml.lock file beside it and leaves the file there, so
+        a .gitignore in config_dir keeps it out of git, unless the user has a .gitignore."""
         gitignore = self.config_dir / ".gitignore"
         if not gitignore.exists():
             gitignore.write_text("pdt.yml.lock\n")
@@ -404,8 +408,15 @@ class Pdt(ExtensionBase):
     def setting_env_names(self, plugin: str) -> set[str]:
         """The env names of the plugin's settings that have a value. Meltano hides each
         sensitive value, and only the names are kept."""
-        out = meltano("--environment", self.environment, "config", "print", plugin, "--format=env",
-                      cwd=self.root)
+        args = ("--environment", self.environment, "config", "print", plugin)
+        try:
+            out = meltano(*args, "--format=env", cwd=self.root)
+        except PdtMeltanoError:
+            # Meltano 4.4 stops on --format=env when no setting of the plugin has a value. The
+            # JSON form is then {}, and such a plugin adds no name.
+            if json.loads(meltano(*args, "--format=json", cwd=self.root)):
+                raise
+            return set()
         return set(re.findall(r"^([A-Za-z_]\w*)=", out, re.MULTILINE))
 
     def schedule_of(self, app: str) -> str:
@@ -428,6 +439,7 @@ class Pdt(ExtensionBase):
         if alerts is not None and alerts != load_yaml(self.config_dir / "pdt.yml").get("alerts"):
             if not (self.config_dir / "pdt.yml").is_file():
                 self.initialize()
+            self.ignore_lock()
             saved = os.environ.get("PDT_PROJECT")
             os.environ["PDT_PROJECT"] = str(self.config_dir)
             try:
@@ -454,6 +466,8 @@ class Pdt(ExtensionBase):
             self.initialize()
         shared = args[:1] == ("alerts",) and (self.config_dir / "pdt.yml").is_file()
         project = self.config_dir if shared else self.stage
+        if shared:
+            self.ignore_lock()
         env = {**os.environ, **{key: value for key, value in dotenv_values(self.root / ".env").items()
                                 if value is not None and key not in os.environ},
                "PDT_PROJECT": str(project)}
