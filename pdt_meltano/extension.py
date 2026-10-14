@@ -5,7 +5,7 @@ extension writes one such app for each Meltano schedule into a pdt
 project in .meltano/utilities/<plugin name>/pdt/<environment>/<Meltano
 project folder name>/, then runs pdt on it. pdt names the project after
 that folder in events and alerts, and the image keeps the project in
-/<Meltano project folder name>, so a deployed run shows the same name.
+/srv/<Meltano project folder name>, so a deployed run shows the same name.
 Each Meltano environment has its own project, and each app is
 named <schedule>-<environment>, so dev and prod deploy as separate jobs
 with separate state. The user names schedules in every command, and
@@ -133,9 +133,9 @@ STARTER = """\
 DOCKERFILE = f"FROM {BASE_IMAGE}\n" + """\
 RUN apt-get update && apt-get install -y --no-install-recommends git \\
     && rm -rf /var/lib/apt/lists/*
-COPY . /{project}
-WORKDIR /{project}/{app}
-ENV PDT_PROJECT=/{project} NO_COLOR=1 PYTHONUNBUFFERED=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
+COPY [".", {project}]
+WORKDIR {workdir}
+ENV PDT_PROJECT={project} NO_COLOR=1 PYTHONUNBUFFERED=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
 RUN uv sync --script run.py && uv run --script run.py install
 ENTRYPOINT ["sh", "-c", "uv run --script run.py; code=$?; echo \\"pdt: exit $code\\"; exit $code"]
 """
@@ -234,7 +234,7 @@ class Pdt(ExtensionBase):
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
         # One pdt project for each Meltano environment, so each keeps its own deployed list.
         # pdt names the project after its folder in events and alerts, so the folder has
-        # the Meltano project's name; the image copies it to the same name.
+        # the Meltano project's name; the image copies it to a folder of the same name.
         self.stage = (sys_dir / "utilities" / os.environ["MELTANO_UTILITY_NAME"] / "pdt"
                       / folder_name(self.environment) / self.root.name)
 
@@ -305,7 +305,10 @@ class Pdt(ExtensionBase):
                             symlinks=True)
             (folder / "run.py").write_text(RUN_PY.format(
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
-            (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name, project=self.root.name))
+            (folder / "Dockerfile").write_text(DOCKERFILE.format(
+                # Under /srv, so no project name replaces a system folder; quoted for a space.
+                project=json.dumps(f"/srv/{self.root.name}"),
+                workdir=json.dumps(f"/srv/{self.root.name}/{name}")))
             config.write_text(yaml.safe_dump(
                 {"schedule": schedule.cron, "env": {"optional": optional}, **kept},
                 sort_keys=False))

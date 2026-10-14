@@ -91,7 +91,8 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert "ENVIRONMENT = 'prod'" in run_py
     compile(run_py, "run.py", "exec")
     dockerfile = (app / "Dockerfile").read_text()
-    assert "COPY . /warehouse\nWORKDIR /warehouse/daily-sync-prod\nENV PDT_PROJECT=/warehouse " in dockerfile
+    assert ('COPY [".", "/srv/warehouse"]\nWORKDIR "/srv/warehouse/daily-sync-prod"\n'
+            'ENV PDT_PROJECT="/srv/warehouse" ') in dockerfile
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "aws", "region": "us-east-2"}}
 
@@ -208,6 +209,18 @@ def test_only_deploy_and_secrets_find_the_env_names(meltano_project, monkeypatch
             assert config.read_text() == written
     assert finds == [False, True, False, True, False]
     assert yaml.safe_load(written)["env"] == {"optional": ["TAP_GITHUB_TOKEN"]}
+
+
+def test_the_image_keeps_a_project_folder_with_a_space_under_srv(tmp_path, meltano_project, monkeypatch):
+    root = meltano_project.rename(tmp_path / "usr warehouse")
+    monkeypatch.setenv("MELTANO_PROJECT_ROOT", str(root))
+    monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(root / ".meltano"))
+    ext = Pdt()
+    ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    assert ext.stage.name == "usr warehouse"
+    dockerfile = (ext.stage / "daily-sync-prod" / "Dockerfile").read_text()
+    assert ('COPY [".", "/srv/usr warehouse"]\nWORKDIR "/srv/usr warehouse/daily-sync-prod"\n'
+            'ENV PDT_PROJECT="/srv/usr warehouse" ') in dockerfile
 
 
 def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monkeypatch):
