@@ -16,9 +16,10 @@ Meltano system database, which holds each extractor's state, in the
 app's pdt storage folder: it pulls the database before the run and
 pushes it after, under pdt's storage lock.
 
-Every setting of the plugin goes under platform: in pdt.yml, so pdt
-checks it. The provider comes from the Meltano Hub entry the user added (a
-default setting value); the user sets the others with `meltano config`.
+Every setting of the Hub entries goes under platform: in pdt.yml, so pdt
+checks it. Another env var with the plugin's prefix does not. The provider
+comes from the Meltano Hub entry the user added (a default setting value);
+the user sets the others with `meltano config`.
 
 Every other key of pdt.yml, such as alerts:, is the same for each cloud, so it
 lives in pdt.yml in the Meltano project, which every pdt plugin of the
@@ -50,6 +51,9 @@ from pdt.deploy_common import BASE_IMAGE
 PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
             "output", ".pdt", "pdt.yml")
+# The settings of the Meltano Hub entries. Each one that has a value goes under platform: in pdt.yml.
+SETTINGS = ("provider", "region", "timezone", "account", "profile", "subscription",
+            "resource_group", "environment", "project")
 # pdt saves these into pdt.yml on the first deploy.
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
 # pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
@@ -175,11 +179,10 @@ class Pdt(ExtensionBase):
         # Where older versions wrote the pdt project.
         self.legacy_stage = sys_dir / "run" / os.environ["MELTANO_UTILITY_NAME"]
         self.left_out = LEFT_OUT + ((sys_dir.name,) if sys_dir.is_relative_to(self.root) else ())
-        prefix = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper() + "_"
-        self.settings = {key[len(prefix):].lower(): value.strip()
-                         for key, value in os.environ.items()
-                         if prefix != "_" and key.startswith(prefix) and value.strip() != ""
-                         and not key[len(prefix):].startswith("_")}
+        namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
+        values = {name: os.environ.get(f"{namespace}_{name.upper()}", "").strip()
+                  for name in SETTINGS} if namespace else {}
+        self.settings = {name: value for name, value in values.items() if value}
         self.provider = self.settings.get("provider", "")
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
 

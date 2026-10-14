@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from pdt.config import PLATFORM_KEYS
 
 from pdt_meltano import extension, main
 from pdt_meltano.extension import Pdt, PdtMeltanoError, Schedule, app_name, parse_schedules
@@ -124,14 +125,26 @@ def test_write_project_keeps_what_pdt_wrote_into_an_app_config(meltano_project):
         "enabled": False, "pause": True}
 
 
-def test_every_setting_goes_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
+def test_only_the_declared_settings_go_to_platform_for_pdt_to_check(meltano_project, monkeypatch):
     monkeypatch.setenv("PDT_AWS_TIMEZONE", "America/Chicago")
+    monkeypatch.setenv("PDT_AWS_RESOURCE_GROUP", "jobs")
     monkeypatch.setenv("PDT_AWS_BUGABOO", "abcdef")
     monkeypatch.setenv("PDT_AWS__LOG_PARSER", "singer-sdk")
     ext = Pdt()
     ext.write_project([])
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text())["platform"] == {
-        "provider": "aws", "region": "us-east-2", "timezone": "America/Chicago", "bugaboo": "abcdef"}
+        "provider": "aws", "region": "us-east-2", "timezone": "America/Chicago", "resource_group": "jobs"}
+
+
+def test_the_hub_entries_and_the_readme_name_the_settings_the_extension_reads():
+    repo = Path(__file__).parent.parent
+    readme = (repo / "README.md").read_text()
+    for entry in sorted((repo / "hub").glob("*.yml")):
+        settings = yaml.safe_load(entry.read_text())["settings"]
+        assert tuple(setting["name"] for setting in settings) == extension.SETTINGS, entry.name
+        assert all({"label", "description", "kind"} <= set(setting) for setting in settings), entry.name
+    assert all(f"| `{name}`" in readme for name in extension.SETTINGS)
+    assert set(extension.SETTINGS) == PLATFORM_KEYS
 
 
 def test_a_missing_provider_names_the_fix(meltano_project, monkeypatch):

@@ -29,11 +29,41 @@ pip_url: pdt-meltano
 repo: https://github.com/AutoIDM/pdt
 settings:
 - description: The cloud this entry deploys to. Leave it as it is; each Hub entry sets its own.
+  kind: string
   label: Provider
   name: provider
   value: aws
 - description: Which AWS region should hold your jobs?
+  kind: string
   label: Region
   name: region
   value: us-east-1
+- description: The time zone of the schedule intervals, such as America/Chicago. The default is Etc/UTC. Azure accepts only Etc/UTC.
+  kind: string
+  label: Time Zone
+  name: timezone
+- description: AWS only. The AWS account that holds the jobs. pdt adds it on your first deploy.
+  kind: string
+  label: AWS Account
+  name: account
+- description: AWS only. The profile in ~/.aws to sign in with. pdt adds it if it has to ask you.
+  kind: string
+  label: AWS Profile
+  name: profile
+- description: Azure only. The Azure subscription that holds the jobs. pdt adds it on your first deploy.
+  kind: string
+  label: Azure Subscription
+  name: subscription
+- description: Azure only. The resource group for the jobs.
+  kind: string
+  label: Azure Resource Group
+  name: resource_group
+- description: Azure only. A Container Apps environment you already have, as <resource-group>/<name>.
+  kind: string
+  label: Azure Container Apps Environment
+  name: environment
+- description: Google Cloud only. The Google Cloud project that holds the jobs. pdt adds it on your first deploy.
+  kind: string
+  label: Google Cloud Project
+  name: project
 variant: autoidm

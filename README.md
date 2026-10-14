@@ -65,7 +65,7 @@ Commands take schedule names, the same names that `meltano schedule list` shows.
 
 ## Config
 
-pdt-meltano writes a pdt project into `.meltano/utilities/pdt-aws/pdt/` each time you run a command. `meltano install` keeps this folder, so the list of deployed schedules and the values pdt saves on your first deploy stay. Older versions of pdt-meltano wrote the project into `.meltano/run/pdt-aws/`, and pdt-meltano moves it from there once. Set the plugin settings with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
+pdt-meltano writes a pdt project into `.meltano/utilities/pdt-aws/pdt/` each time you run a command. `meltano install` keeps this folder, so the list of deployed schedules and the values pdt saves on your first deploy stay. Older versions of pdt-meltano wrote the project into `.meltano/run/pdt-aws/`, and pdt-meltano moves it from there once. Set the plugin settings with Meltano, not in `pdt.yml`. Each setting in the table below that you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. pdt-meltano reads no other setting, so an env var such as `PDT_AWS_OTHER` in your shell does not reach pdt. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
 
 These are the settings that pdt reads:
 
