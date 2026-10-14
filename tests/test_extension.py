@@ -155,6 +155,27 @@ def test_names_come_only_from_the_blocks_of_the_job_plugins(meltano_project):
         "tap-unknown": set()}
 
 
+def test_the_project_settings_names_go_to_every_job(meltano_project, monkeypatch):
+    (meltano_project / "meltano.yml").write_text(
+        "project_id: x\nstate_backend: {uri: 's3://${STATE_BUCKET}/state'}\n"
+        "send_anonymous_usage_stats: $MELTANO_STATS\njobs: [{name: j, tasks: [$JOB_ONLY]}]\n"
+        "plugins: {extractors: [{name: tap-github, config: {org: $GITHUB_ORG}}],\n"
+        "  loaders: [{name: target-postgres}]}\n"
+        "environments:\n- {name: prod, config: {state_backend: {uri: $PROD_STATE}, plugins: {loaders: "
+        "[{name: target-postgres, config: {host: $PROD_HOST}}]}}}\n"
+        "- {name: dev, config: {state_backend: {uri: $DEV_STATE}}}\n")
+    for name in ("STATE_BUCKET", "MELTANO_STATS", "JOB_ONLY", "GITHUB_ORG", "PROD_STATE", "PROD_HOST",
+                 "DEV_STATE"):
+        monkeypatch.setenv(name, "x")
+    ext = Pdt()
+    assert ext.referenced_names(["tap-github", "target-postgres"]) == {
+        "tap-github": {"STATE_BUCKET", "MELTANO_STATS", "PROD_STATE", "GITHUB_ORG"},
+        "target-postgres": {"STATE_BUCKET", "MELTANO_STATS", "PROD_STATE", "PROD_HOST"}}
+    ext.write_project([Schedule("sync", "daily", ["j"], ("target-postgres",))])
+    assert yaml.safe_load((ext.stage / "sync-prod" / "config.yml").read_text())["env"]["optional"] == [
+        "PROD_HOST", "PROD_STATE", "STATE_BUCKET", "TARGET_POSTGRES_PASSWORD"]
+
+
 def test_the_names_of_this_pdt_plugin_stay_out(meltano_project, monkeypatch):
     monkeypatch.setenv("PDT_AWS_CONFIG_DIR", "/x")
     ext = Pdt()

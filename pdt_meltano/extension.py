@@ -23,9 +23,10 @@ pushes it after, under pdt's storage lock.
 The image holds no .env. A deploy sends the job the env values it reads as
 the app's cloud secret: the setting env names of the job's plugins, from
 `meltano config print --format=env`, and each $NAME in those plugins'
-blocks of meltano.yml, when .env or the shell gives it a value. config.yml
-lists them under env: optional:. Only deploy and secrets find them again;
-the other commands keep the list. pdt adds the alert webhooks itself.
+blocks and in the project settings of meltano.yml, when .env or the shell
+gives it a value. config.yml lists them under env: optional:. Only deploy
+and secrets find them again; the other commands keep the list. pdt adds
+the alert webhooks itself.
 
 Every setting of the Hub entries goes under platform: in pdt.yml, so pdt
 checks it. Another env var with the plugin's prefix does not. The provider
@@ -363,12 +364,15 @@ class Pdt(ExtensionBase):
     def referenced_names(self, plugins: list[str]) -> dict[str, set[str]]:
         """Each $NAME in the blocks of each plugin in meltano.yml and its include_paths files:
         the plugin entry, the mapper of a mapping, the active environment's config for the
-        plugin, and the same for each inherit_from parent."""
+        plugin, and the same for each inherit_from parent. Every `meltano run` reads the
+        project settings, such as state_backend, so their $NAMEs go to every plugin."""
         documents = [load_yaml(self.root / "meltano.yml")]
         for pattern in documents[0].get("include_paths") or []:
             documents += [load_yaml(path) for path in sorted(self.root.glob(pattern))]
-        entries, overrides = {}, []
+        entries, overrides, project = {}, [], []
         for document in documents:
+            project.append({key: value for key, value in document.items() if key not in (
+                "plugins", "environments", "jobs", "schedules", "include_paths")})
             for group in (document.get("plugins") or {}).values():
                 for entry in group or []:
                     entries[entry["name"]] = entry
@@ -376,11 +380,13 @@ class Pdt(ExtensionBase):
                         entries[mapping["name"]] = {**mapping, "inherit_from": entry["name"]}
             for environment in document.get("environments") or []:
                 if environment.get("name") == self.environment:
+                    project.append({key: value for key, value in (environment.get("config") or {}).items()
+                                    if key != "plugins"})
                     for group in ((environment.get("config") or {}).get("plugins") or {}).values():
                         overrides += group or []
         found = {}
         for plugin in plugins:
-            blocks, name = [], plugin
+            blocks, name = list(project), plugin
             while name in entries and entries[name] not in blocks:
                 blocks += [entries[name], *(entry for entry in overrides if entry.get("name") == name)]
                 name = entries[name].get("inherit_from")
