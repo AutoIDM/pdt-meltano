@@ -22,9 +22,10 @@ pushes it after, under pdt's storage lock.
 
 The image holds no .env. A deploy sends the job the env values it reads as
 the app's cloud secret: the setting env names of the job's plugins, from
-`meltano config print --format=env`, and each $NAME that meltano.yml
-names, when .env or the shell gives it a value. config.yml lists them
-under env: optional:. pdt adds the alert webhooks itself.
+`meltano config print --format=env`, and each $NAME in those plugins'
+blocks of meltano.yml, when .env or the shell gives it a value. config.yml
+lists them under env: optional:. Only deploy and secrets find them again;
+the other commands keep the list. pdt adds the alert webhooks itself.
 
 Every setting of the Hub entries goes under platform: in pdt.yml, so pdt
 checks it. Another env var with the plugin's prefix does not. The provider
@@ -76,6 +77,8 @@ APP_WRITTEN_BACK = ("enabled", "pause")
 # The pdt commands that take an app name. pdt-meltano gives them the app of a schedule.
 APP_COMMANDS = ("run", "deploy", "login", "destroy", "pause", "unpause", "secrets", "storage",
                 "runs", "logs", "health")
+# The pdt commands that send or compare an app's env values, so they need its env names.
+SECRET_COMMANDS = ("deploy", "secrets")
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -251,11 +254,13 @@ class Pdt(ExtensionBase):
         state = self.stage / ".pdt" / "state"
         return set(json.loads(state.read_text()).get("deployed") or []) if state.is_file() else set()
 
-    def write_project(self, schedules: list[Schedule]) -> list[str]:
+    def write_project(self, schedules: list[Schedule], find_env: bool = True) -> list[str]:
         """Write the pdt project for these schedules and return their app names.
 
         An app folder whose schedule is gone is removed, unless it is still
-        deployed: destroy needs the folder to find what to remove.
+        deployed: destroy needs the folder to find what to remove. Without
+        `find_env`, each app keeps the env names its config.yml lists, because
+        finding them takes a Meltano call for each plugin.
         """
         provider = PROVIDERS.get(self.provider)
         if provider is None:
@@ -278,7 +283,7 @@ class Pdt(ExtensionBase):
             f"# {self.config_dir / 'pdt.yml'}. pdt-meltano copies alerts: that pdt\n"
             "# writes here to that file.\n"
             + yaml.safe_dump({"platform": platform, **shared}, sort_keys=False))
-        env_names = self.env_names(schedules)
+        env_names = self.env_names(schedules) if find_env else {}
         versions = {"pdt": importlib.metadata.version("pdt-cli"),
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
         names = []
@@ -288,6 +293,7 @@ class Pdt(ExtensionBase):
             config = folder / "config.yml"
             own = load_yaml(config)
             kept = {key: own[key] for key in APP_WRITTEN_BACK if key in own}
+            optional = env_names.get(schedule.name, (own.get("env") or {}).get("optional") or [])
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*self.left_out),
                             symlinks=True)
@@ -295,7 +301,7 @@ class Pdt(ExtensionBase):
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
             config.write_text(yaml.safe_dump(
-                {"schedule": schedule.cron, "env": {"optional": env_names[schedule.name]}, **kept},
+                {"schedule": schedule.cron, "env": {"optional": optional}, **kept},
                 sort_keys=False))
             names.append(name)
         deployed = self.deployed()
@@ -325,29 +331,61 @@ class Pdt(ExtensionBase):
         if not gitignore.exists():
             gitignore.write_text("pdt.yml.lock\n")
 
-    def write_environment_project(self) -> list[str]:
+    def write_environment_project(self, command: str | None) -> list[str]:
         """Write the pdt project of the active Meltano environment and return its app names."""
         if self.environment == "":
             raise PdtMeltanoError(
                 "no Meltano environment is active, and pdt-meltano deploys each environment as "
                 "its own jobs. Set `default_environment` in meltano.yml, or run the command with "
                 "`meltano --environment <name>`.")
-        return self.write_project(self.schedules())
+        return self.write_project(self.schedules(), find_env=command in SECRET_COMMANDS)
 
     def env_names(self, schedules: list[Schedule]) -> dict[str, list[str]]:
         """For each schedule, the env names its job reads that have a value in .env or in the
-        shell: the setting env names of the job's plugins, and each $NAME in meltano.yml.
-        Meltano sets the MELTANO_ names in the job itself, so they stay out."""
+        shell: the setting env names of the job's plugins, and each $NAME in their blocks of
+        meltano.yml. Meltano sets the MELTANO_ names in the job itself, and the names of this
+        pdt plugin's own settings are for this computer, so both stay out."""
         plugins = sorted({plugin for schedule in schedules for plugin in schedule.plugins})
         # One Meltano call for each plugin, at the same time, because each takes seconds.
         with ThreadPoolExecutor() as pool:
             settings = dict(zip(plugins, pool.map(self.setting_env_names, plugins)))
-        referenced = set(re.findall(r"\$\{?([A-Za-z_]\w*)", (self.root / "meltano.yml").read_text()))
+        referenced = self.referenced_names(plugins)
         env_file = self.root / ".env"
         values = {**(dotenv_values(env_file) if env_file.is_file() else {}), **os.environ}
-        have = {name for name, value in values.items() if value and not name.startswith("MELTANO_")}
-        return {schedule.name: sorted(have & referenced.union(*map(settings.get, schedule.plugins)))
+        own = tuple(f"{os.environ.get(key, '').upper().replace('-', '_')}_"
+                    for key in ("MELTANO_UTILITY_NAME", "MELTANO_UTILITY_NAMESPACE"))
+        have = {name for name, value in values.items()
+                if value and not name.startswith(("MELTANO_", *own))}
+        return {schedule.name: sorted(have & set().union(
+                    *(settings[plugin] | referenced[plugin] for plugin in schedule.plugins)))
                 for schedule in schedules}
+
+    def referenced_names(self, plugins: list[str]) -> dict[str, set[str]]:
+        """Each $NAME in the blocks of each plugin in meltano.yml and its include_paths files:
+        the plugin entry, the mapper of a mapping, the active environment's config for the
+        plugin, and the same for each inherit_from parent."""
+        documents = [load_yaml(self.root / "meltano.yml")]
+        for pattern in documents[0].get("include_paths") or []:
+            documents += [load_yaml(path) for path in sorted(self.root.glob(pattern))]
+        entries, overrides = {}, []
+        for document in documents:
+            for group in (document.get("plugins") or {}).values():
+                for entry in group or []:
+                    entries[entry["name"]] = entry
+                    for mapping in entry.get("mappings") or []:
+                        entries[mapping["name"]] = {**mapping, "inherit_from": entry["name"]}
+            for environment in document.get("environments") or []:
+                if environment.get("name") == self.environment:
+                    for group in ((environment.get("config") or {}).get("plugins") or {}).values():
+                        overrides += group or []
+        found = {}
+        for plugin in plugins:
+            blocks, name = [], plugin
+            while name in entries and entries[name] not in blocks:
+                blocks += [entries[name], *(entry for entry in overrides if entry.get("name") == name)]
+                name = entries[name].get("inherit_from")
+            found[plugin] = set(re.findall(r"\$\{?([A-Za-z_]\w*)", json.dumps(blocks)))
+        return found
 
     def setting_env_names(self, plugin: str) -> set[str]:
         """The env names of the plugin's settings that have a value. Meltano hides each
@@ -420,7 +458,7 @@ class Pdt(ExtensionBase):
         Only deploy is limited to the schedules in meltano.yml; the other
         commands also reach a removed schedule that is still deployed.
         """
-        current = self.write_environment_project()
+        current = self.write_environment_project(command)
         known = current if command == "deploy" else self.known_apps()
         unknown = [name for name in names if self.app_of(name, known) is None]
         if unknown:
@@ -436,7 +474,7 @@ class Pdt(ExtensionBase):
         return max(codes)
 
     def invoke(self, command_name: str | None, *command_args: str) -> None:
-        self.write_environment_project()
+        self.write_environment_project(command_name)
         args = list(command_args)
         if command_name in APP_COMMANDS:
             # The user names a schedule; pdt needs the app of the active environment.

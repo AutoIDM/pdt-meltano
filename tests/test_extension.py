@@ -43,6 +43,7 @@ PLUGIN_ENV = {
     "tap-github": "TAP_GITHUB_TOKEN='*****'\nMELTANO_EXTRACT_TOKEN='*****'\nTAP_GITHUB_START_DATE=2024-01-01\n",
     "target-postgres": "TARGET_POSTGRES_PASSWORD='*****'\nMELTANO_LOAD_PASSWORD='*****'\n",
     "dbt": "DBT_PROFILES_DIR=/x\n",
+    "pdt-aws": "PDT_AWS_PROVIDER=aws\nPDT_AWS_REGION=us-east-2\nPDT_AWS_CONFIG_DIR=/x\n",
 }
 
 
@@ -110,10 +111,81 @@ def test_each_app_lists_only_the_env_names_its_job_reads(meltano_project, monkey
                 for app in ("github-prod", "models-prod")}
     assert optional == {
         "github-prod": ["GITHUB_ORG", "TAP_GITHUB_START_DATE", "TAP_GITHUB_TOKEN", "TARGET_POSTGRES_PASSWORD"],
-        "models-prod": ["GITHUB_ORG", "TARGET_POSTGRES_PASSWORD"]}
+        "models-prod": ["TARGET_POSTGRES_PASSWORD"]}
     assert sorted(call[4] for call in calls if call[2:4] == ("config", "print")) == [
         "dbt", "tap-github", "target-postgres"]
     assert all(call[:2] == ("--environment", "prod") for call in calls if "config" in call)
+
+
+MELTANO_YML = """\
+project_id: x
+include_paths: [./meltano-*.yml]
+plugins:
+  extractors:
+  - {name: tap-base, config: {key: $BASE_KEY}}
+  - {name: tap-child, inherit_from: tap-base, config: {org: '${CHILD_ORG}'}}
+  - {name: tap-other, config: {key: $OTHER_KEY}}
+  mappers:
+  - name: mapper-x
+    config: {salt: $MAPPER_SALT}
+    mappings:
+    - {name: hide-email, config: {field: $HIDE_FIELD}}
+environments:
+- name: prod
+  config:
+    plugins:
+      extractors:
+      - {name: tap-child, config: {host: $PROD_HOST}}
+- name: dev
+  config:
+    plugins:
+      extractors:
+      - {name: tap-child, config: {host: $DEV_HOST}}
+"""
+
+
+def test_names_come_only_from_the_blocks_of_the_job_plugins(meltano_project):
+    (meltano_project / "meltano.yml").write_text(MELTANO_YML)
+    (meltano_project / "meltano-loaders.yml").write_text(
+        "plugins:\n  loaders:\n  - {name: target-x, config: {password: $TARGET_X_PW}}\n")
+    assert Pdt().referenced_names(["tap-child", "hide-email", "target-x", "tap-unknown"]) == {
+        "tap-child": {"BASE_KEY", "CHILD_ORG", "PROD_HOST"},
+        "hide-email": {"HIDE_FIELD", "MAPPER_SALT"},
+        "target-x": {"TARGET_X_PW"},
+        "tap-unknown": set()}
+
+
+def test_the_names_of_this_pdt_plugin_stay_out(meltano_project, monkeypatch):
+    monkeypatch.setenv("PDT_AWS_CONFIG_DIR", "/x")
+    ext = Pdt()
+    ext.write_project([Schedule("describe", "daily", ["d"], ("pdt-aws", "tap-github"))])
+    assert yaml.safe_load((ext.stage / "describe-prod" / "config.yml").read_text())["env"] == {
+        "optional": ["TAP_GITHUB_TOKEN"]}
+
+
+def test_only_deploy_and_secrets_find_the_env_names(meltano_project, monkeypatch):
+    calls = []
+    fake = extension.meltano
+    monkeypatch.setattr(extension, "meltano", lambda *args, cwd: calls.append(args) or fake(*args, cwd=cwd))
+    ext = Pdt()
+    monkeypatch.setattr(ext, "schedules", lambda: [Schedule("daily-sync", "daily", ["sync"], ("tap-github",))])
+    monkeypatch.setattr(ext, "pdt", lambda *args: 0)
+    config = ext.stage / "daily-sync-prod" / "config.yml"
+    finds = []
+    for command in ("list", "deploy", "logs", "secrets", None):
+        calls.clear()
+        if command == "deploy":
+            ext.each(command, [])
+        else:
+            with pytest.raises(SystemExit):
+                ext.invoke(command, "daily-sync")
+        finds.append(any(call[2:4] == ("config", "print") for call in calls))
+        if command == "deploy":
+            written = config.read_text()
+        if command == "logs":
+            assert config.read_text() == written
+    assert finds == [False, True, False, True, False]
+    assert yaml.safe_load(written)["env"] == {"optional": ["TAP_GITHUB_TOKEN"]}
 
 
 def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monkeypatch):
