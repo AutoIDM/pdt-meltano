@@ -27,9 +27,9 @@ def test_parse_schedules_keeps_repeating_job_schedules():
     assert [reason.split(":")[0] for reason in skipped] == ["by-hand", "old-style"]
 
 
-def test_app_name_is_the_schedule_name_as_a_folder_name_pdt_accepts():
-    assert app_name("daily-sync") == "daily-sync"
-    assert app_name("Daily_Sync") == "daily-sync"
+def test_app_name_is_the_schedule_and_environment_as_a_folder_name_pdt_accepts():
+    assert app_name("daily-sync", "prod") == "daily-sync-prod"
+    assert app_name("Daily_Sync", "Staging EU") == "daily-sync-staging-eu"
 
 
 @pytest.fixture
@@ -57,9 +57,9 @@ def meltano_project(tmp_path, monkeypatch):
 def test_write_project_makes_one_app_per_schedule(meltano_project):
     ext = Pdt()
     names = ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
-    assert names == ["daily-sync"]
-    assert ext.stage == meltano_project / ".meltano" / "utilities" / "pdt-aws" / "pdt"
-    app = ext.stage / "daily-sync"
+    assert names == ["daily-sync-prod"]
+    assert ext.stage == meltano_project / ".meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
+    app = ext.stage / "daily-sync-prod"
     assert (app / "meltano.yml").is_file()
     assert (app / "extract" / "catalog.json").is_file()
     assert not (app / ".env").exists()
@@ -71,7 +71,7 @@ def test_write_project_makes_one_app_per_schedule(meltano_project):
     assert "JOB = ['sync']" in run_py
     assert "ENVIRONMENT = 'prod'" in run_py
     compile(run_py, "run.py", "exec")
-    assert "WORKDIR /workspace/daily-sync" in (app / "Dockerfile").read_text()
+    assert "WORKDIR /workspace/daily-sync-prod" in (app / "Dockerfile").read_text()
     assert yaml.safe_load((ext.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "aws", "region": "us-east-2"}}
 
@@ -80,8 +80,8 @@ def test_a_system_folder_inside_the_project_is_not_copied(meltano_project, monke
     monkeypatch.setenv("MELTANO_SYS_DIR_ROOT", str(meltano_project / "state" / "meltano"))
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
-    assert ext.stage == meltano_project / "state" / "meltano" / "utilities" / "pdt-aws" / "pdt"
-    assert not (ext.stage / "daily-sync" / "state" / "meltano").exists()
+    assert ext.stage == meltano_project / "state" / "meltano" / "utilities" / "pdt-aws" / "pdt" / "prod"
+    assert not (ext.stage / "daily-sync-prod" / "state" / "meltano").exists()
 
 
 def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
@@ -97,7 +97,7 @@ def test_write_project_keeps_what_pdt_wrote_back(meltano_project):
 def test_write_project_keeps_what_pdt_wrote_into_an_app_config(meltano_project):
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"])])
-    config = ext.stage / "daily-sync" / "config.yml"
+    config = ext.stage / "daily-sync-prod" / "config.yml"
     config.write_text(config.read_text() + "pause: true\nenabled: false\n")
     ext.write_project([Schedule("daily-sync", "hourly", ["sync"])])
     assert yaml.safe_load(config.read_text()) == {
@@ -138,9 +138,9 @@ def test_write_project_follows_meltano_yml(meltano_project, capsys):
     ext = Pdt()
     ext.write_project([Schedule("daily-sync", "daily", ["sync"]), Schedule("hourly", "hourly", ["sync"])])
     (ext.stage / ".pdt").mkdir()
-    (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly"]}')
-    assert ext.write_project([Schedule("weekly", "weekly", ["sync"])]) == ["weekly"]
-    assert sorted(run_py.parent.name for run_py in ext.stage.glob("*/run.py")) == ["hourly", "weekly"]
+    (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly-prod"]}')
+    assert ext.write_project([Schedule("weekly", "weekly", ["sync"])]) == ["weekly-prod"]
+    assert ext.known_apps() == ["hourly-prod", "weekly-prod"]
     assert capsys.readouterr().err == (
         "warning: hourly is deployed but is no longer a job schedule in meltano.yml. Run "
         "`meltano --environment=prod invoke pdt-aws destroy hourly` to remove it.\n")
@@ -153,7 +153,8 @@ def test_each_takes_schedule_names(meltano_project, monkeypatch):
     monkeypatch.setattr(ext, "pdt", lambda *args: ran.append(args) or 0)
     assert ext.each("deploy", ["Daily_Sync"]) == 0
     assert ext.each("runs", ["daily-sync"]) == 0
-    assert ran == [("deploy", "daily-sync"), ("runs", "daily-sync")]
+    assert ext.each("runs", ["daily-sync-prod"]) == 0
+    assert ran == [("deploy", "daily-sync-prod"), ("runs", "daily-sync-prod"), ("runs", "daily-sync-prod")]
     with pytest.raises(PdtMeltanoError, match="This project has: daily-sync"):
         ext.each("deploy", ["test-daily-sync"])
 
@@ -162,12 +163,47 @@ def test_only_deploy_leaves_out_a_removed_schedule_that_is_still_deployed(meltan
     ext = Pdt()
     ext.write_project([Schedule("hourly", "hourly", ["sync"])])
     (ext.stage / ".pdt").mkdir()
-    (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly"]}')
+    (ext.stage / ".pdt" / "state").write_text('{"deployed": ["hourly-prod"]}')
     monkeypatch.setattr(ext, "schedules", lambda: [])
     monkeypatch.setattr(ext, "pdt", lambda *args: 0)
     assert ext.each("destroy", ["hourly"]) == 0
     with pytest.raises(PdtMeltanoError, match="no job schedule named hourly"):
         ext.each("deploy", ["hourly"])
+
+
+def test_each_environment_has_its_own_project_and_apps(meltano_project, monkeypatch):
+    monkeypatch.setenv("MELTANO_ENVIRONMENT", "dev")
+    dev = Pdt()
+    dev.write_project([Schedule("daily-sync", "daily", ["sync"])])
+    (dev.stage / ".pdt").mkdir()
+    (dev.stage / ".pdt" / "state").write_text('{"deployed": ["daily-sync-dev"]}')
+    monkeypatch.setenv("MELTANO_ENVIRONMENT", "prod")
+    prod = Pdt()
+    prod.write_project([Schedule("hourly", "hourly", ["sync"])])
+    assert dev.stage.parent == prod.stage.parent
+    assert (dev.known_apps(), prod.known_apps()) == (["daily-sync-dev"], ["hourly-prod"])
+    assert prod.deployed() == set()
+
+
+def test_a_pdt_command_gets_the_app_of_the_schedule_it_names(meltano_project, monkeypatch):
+    sent = []
+    ext = Pdt()
+    monkeypatch.setattr(ext, "schedules", lambda: [Schedule("daily-sync", "daily", ["sync"])])
+    monkeypatch.setattr(ext, "pdt", lambda *args: sent.append(args) or 0)
+    for args in (("logs", "daily-sync", "2"), ("logs", "--since", "3d", "daily-sync"),
+                 ("storage", "daily-sync", "get", "daily-sync"), ("runs", "daily-sync-prod"),
+                 ("health",), ("list", "daily-sync"), ("pause", "other")):
+        with pytest.raises(SystemExit):
+            ext.invoke(*args)
+    assert sent == [("logs", "daily-sync-prod", "2"), ("logs", "--since", "3d", "daily-sync-prod"),
+                    ("storage", "daily-sync-prod", "get", "daily-sync"), ("runs", "daily-sync-prod"),
+                    ("health",), ("list", "daily-sync"), ("pause", "other")]
+
+
+def test_every_command_needs_an_environment(meltano_project, monkeypatch):
+    monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
+    with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):
+        Pdt().invoke("logs", "daily-sync")
 
 
 def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
@@ -339,8 +375,8 @@ def test_alerts_setup_on_a_missing_folder_writes_the_shared_file_and_every_plugi
     assert yaml.safe_load((azure.stage / "pdt.yml").read_text()) == {
         "platform": {"provider": "azure"}, "alerts": ALERTS}
     assert "SLACK_WEBHOOK_ALERTS" in yaml.safe_load(
-        (azure.stage / "daily-sync" / "config.yml").read_text())["env"]["optional"]
-    assert not (azure.stage / "daily-sync" / "pdt.yml").exists()
+        (azure.stage / "daily-sync-prod" / "config.yml").read_text())["env"]["optional"]
+    assert not (azure.stage / "daily-sync-prod" / "pdt.yml").exists()
 
 
 def test_alerts_setup_replaces_the_alerts_and_keeps_comments(meltano_project, monkeypatch):

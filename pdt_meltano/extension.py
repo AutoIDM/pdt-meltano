@@ -2,8 +2,11 @@
 
 pdt deploys an app: a folder holding run.py, next to a pdt.yml. This
 extension writes one such app for each Meltano schedule into a pdt
-project in .meltano/utilities/<plugin name>/pdt/, then runs pdt on it.
-`meltano install` empties the run folder Meltano gives the plugin,
+project in .meltano/utilities/<plugin name>/pdt/<environment>/, then runs
+pdt on it. Each Meltano environment has its own project, and each app is
+named <schedule>-<environment>, so dev and prod deploy as separate jobs
+with separate state. The user names schedules in every command, and
+pdt-meltano gives pdt the app of the active environment. `meltano install` empties the run folder Meltano gives the plugin,
 .meltano/run/<plugin name>/, but keeps this folder, so what pdt writes
 there lasts: the deployed list, and the keys pdt saves on a deploy. Each
 app folder is a copy of the Meltano project plus three generated files:
@@ -62,6 +65,9 @@ SETTINGS = ("provider", "region", "timezone", "account", "profile", "subscriptio
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
 # pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
 APP_WRITTEN_BACK = ("enabled", "pause")
+# The pdt commands that take an app name. pdt-meltano gives them the app of a schedule.
+APP_COMMANDS = ("run", "deploy", "login", "destroy", "pause", "unpause", "secrets", "storage",
+                "runs", "logs", "health")
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -179,15 +185,19 @@ def parse_schedules(listing: dict) -> tuple[list[Schedule], list[str]]:
     return found, skipped
 
 
-def app_name(schedule: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", schedule.lower()).strip("-")
+def folder_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def app_name(schedule: str, environment: str) -> str:
+    """The pdt app of a schedule in a Meltano environment, so dev and prod deploy apart."""
+    return f"{folder_name(schedule)}-{folder_name(environment)}"
 
 
 class Pdt(ExtensionBase):
     def __init__(self) -> None:
         self.root = Path(os.environ["MELTANO_PROJECT_ROOT"]).resolve()
         sys_dir = Path(os.environ["MELTANO_SYS_DIR_ROOT"]).resolve()
-        self.stage = sys_dir / "utilities" / os.environ["MELTANO_UTILITY_NAME"] / "pdt"
         self.left_out = LEFT_OUT + ((sys_dir.name,) if sys_dir.is_relative_to(self.root) else ())
         namespace = os.environ.get("MELTANO_UTILITY_NAMESPACE", "").upper()
         values = {name: os.environ.get(f"{namespace}_{name.upper()}", "").strip()
@@ -197,6 +207,9 @@ class Pdt(ExtensionBase):
         config_dir = os.environ.get(f"{namespace}_CONFIG_DIR", "").strip() if namespace else ""
         self.config_dir = (self.root / (config_dir or "orchestrate/pdt")).resolve()
         self.environment = os.environ.get("MELTANO_ENVIRONMENT", "")
+        # One pdt project for each Meltano environment, so each keeps its own deployed list.
+        self.stage = sys_dir / "utilities" / os.environ["MELTANO_UTILITY_NAME"] / "pdt" / folder_name(
+            self.environment)
 
     def describe(self) -> models.Describe:
         return models.Describe(commands=[models.ExtensionCommand(
@@ -252,7 +265,7 @@ class Pdt(ExtensionBase):
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
         names = []
         for schedule in schedules:
-            name = app_name(schedule.name)
+            name = app_name(schedule.name, self.environment)
             folder = self.stage / name
             config = folder / "config.yml"
             own = load_yaml(config)
@@ -271,10 +284,10 @@ class Pdt(ExtensionBase):
             if folder.name in names or not (folder / "run.py").is_file():
                 continue
             if folder.name in deployed:
-                environment = f" --environment={self.environment}" if self.environment else ""
-                log("warning", f"{folder.name} is deployed but is no longer a job schedule in "
-                    f"meltano.yml. Run `meltano{environment} invoke "
-                    f"{os.environ['MELTANO_UTILITY_NAME']} destroy {folder.name}` to remove it.")
+                log("warning", f"{self.schedule_of(folder.name)} is deployed but is no longer a job "
+                    f"schedule in meltano.yml. Run `meltano --environment={self.environment} invoke "
+                    f"{os.environ['MELTANO_UTILITY_NAME']} destroy {self.schedule_of(folder.name)}` "
+                    "to remove it.")
             else:
                 shutil.rmtree(folder)
         return names
@@ -292,6 +305,27 @@ class Pdt(ExtensionBase):
         gitignore = self.config_dir / ".gitignore"
         if not gitignore.exists():
             gitignore.write_text("pdt.yml.lock\n")
+
+    def write_environment_project(self) -> list[str]:
+        """Write the pdt project of the active Meltano environment and return its app names."""
+        if self.environment == "":
+            raise PdtMeltanoError(
+                "no Meltano environment is active, and pdt-meltano deploys each environment as "
+                "its own jobs. Set `default_environment` in meltano.yml, or run the command with "
+                "`meltano --environment <name>`.")
+        return self.write_project(self.schedules())
+
+    def schedule_of(self, app: str) -> str:
+        return app.removesuffix(f"-{folder_name(self.environment)}")
+
+    def app_of(self, name: str, known: list[str]) -> str | None:
+        """The app of the schedule `name` in the active environment, or `name` when it
+        is already an app name; None when it is neither."""
+        app = app_name(name, self.environment)
+        return app if app in known else name if name in known else None
+
+    def known_apps(self) -> list[str]:
+        return sorted(run_py.parent.name for run_py in self.stage.glob("*/run.py"))
 
     def keep_written(self, copy_alerts: bool = True) -> None:
         """Copy the alerts: that pdt wrote into the plugin's pdt project to the shared
@@ -345,19 +379,15 @@ class Pdt(ExtensionBase):
         Only deploy is limited to the schedules in meltano.yml; the other
         commands also reach a removed schedule that is still deployed.
         """
-        if command == "deploy" and self.environment == "":
-            raise PdtMeltanoError(
-                "no Meltano environment is active, and `meltano run` needs one. Set "
-                "`default_environment` in meltano.yml, or deploy with `meltano --environment <name>`.")
-        current = self.write_project(self.schedules())
-        known = current if command == "deploy" else sorted(
-            run_py.parent.name for run_py in self.stage.glob("*/run.py"))
-        unknown = [name for name in names if app_name(name) not in known]
+        current = self.write_environment_project()
+        known = current if command == "deploy" else self.known_apps()
+        unknown = [name for name in names if self.app_of(name, known) is None]
         if unknown:
             raise PdtMeltanoError(
                 f"no job schedule named {', '.join(unknown)}. This project has: "
-                f"{', '.join(known) or 'none'}. Add one with `meltano schedule add`.")
-        apps = [app_name(name) for name in names] or known
+                f"{', '.join(map(self.schedule_of, known)) or 'none'}. "
+                "Add one with `meltano schedule add`.")
+        apps = [self.app_of(name, known) for name in names] or known
         if not apps:
             raise PdtMeltanoError("this project has no job schedule with a repeating interval. "
                                   "Add one with `meltano schedule add`.")
@@ -365,5 +395,14 @@ class Pdt(ExtensionBase):
         return max(codes)
 
     def invoke(self, command_name: str | None, *command_args: str) -> None:
-        self.write_project(self.schedules())
-        sys.exit(self.pdt(*([command_name] if command_name else []), *command_args))
+        self.write_environment_project()
+        args = list(command_args)
+        if command_name in APP_COMMANDS:
+            # The user names a schedule; pdt needs the app of the active environment.
+            known = self.known_apps()
+            for index, arg in enumerate(args):
+                app = None if arg.startswith("-") else self.app_of(arg, known)
+                if app is not None:
+                    args[index] = app
+                    break
+        sys.exit(self.pdt(*([command_name] if command_name else []), *args))
