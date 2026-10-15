@@ -288,10 +288,15 @@ def test_only_the_declared_settings_go_to_platform_for_pdt_to_check(meltano_proj
 def test_the_hub_entries_and_the_readme_name_the_settings_the_extension_reads():
     repo = Path(__file__).parent.parent
     readme = (repo / "README.md").read_text()
+    cloud_settings = {"aws": ["account", "profile"], "azure": ["environment", "resource_group", "subscription"],
+                      "gcloud": ["project"]}
     for entry in sorted((repo / "hub").glob("*.yml")):
         settings = yaml.safe_load(entry.read_text())["settings"]
-        assert tuple(setting["name"] for setting in settings) == (*extension.SETTINGS, "config_dir"), entry.name
+        provider = next(setting["value"] for setting in settings if setting["name"] == "provider")
+        names = ["config_dir", "provider", "region", "timezone", *cloud_settings[provider]]
+        assert [setting["name"] for setting in settings] == sorted(names), entry.name
         assert all({"label", "description", "kind"} <= set(setting) for setting in settings), entry.name
+    assert sorted(["provider", "region", "timezone", *sum(cloud_settings.values(), [])]) == sorted(extension.SETTINGS)
     assert all(f"| `{name}`" in readme for name in extension.SETTINGS)
     assert "`config_dir`" in readme and "config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod" in readme
     assert set(extension.SETTINGS) == PLATFORM_KEYS
