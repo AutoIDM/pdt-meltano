@@ -42,13 +42,15 @@ Then deploy:
 meltano invoke pdt-aws deploy
 ```
 
-`deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Every value in your project's `.env` goes to the cloud job as a secret, so when you change a value, deploy again.
+`deploy` shows you a plan and a monthly cost estimate, and it asks before it changes anything. The first time, it also asks you to sign in to your cloud account. Each cloud job gets, as a secret, only the env vars that its job reads: the setting env vars of the job's plugins, such as `TAP_GITHUB_AUTH_TOKEN`, and each `$NAME` or `${NAME}` in the config of those plugins in `meltano.yml` and its `include_paths` files. Each `$NAME` in the project settings, such as the `uri` of `state_backend:`, goes to every job, because every `meltano run` reads them. A name goes only when your project's `.env` or your shell gives it a value. Names that start with `MELTANO_` stay out, because Meltano sets them in the job, so a state backend that only `.env` sets, for example with `MELTANO_STATE_BACKEND_URI`, does not reach the job. Use `uri: $STATE_BACKEND_URI` in `meltano.yml` with the value in `.env` instead. Other values in `.env`, such as your own cloud keys, stay on your computer. The plan shows the names, for example `env vars TAP_GITHUB_AUTH_TOKEN, TARGET_POSTGRES_PASSWORD`, and never a value. When you change a value, deploy again.
 
 A schedule with the interval `@manual` or `@once` does not repeat, so pdt-meltano leaves it out and tells you why. So does a schedule that runs `meltano elt` instead of a job.
 
 ## Commands
 
-Commands take schedule names, the same names that `meltano schedule list` shows. For `deploy` and `destroy`, the schedule names are optional; leave them out to act on every schedule.
+Every command takes schedule names, the same names that `meltano schedule list` shows. This includes the pdt commands that act on one schedule, such as `logs`, `runs`, `pause`, `unpause`, `run --deployed`, `secrets`, and `storage`. pdt-meltano gives pdt the job name of that schedule in the active Meltano environment. For `deploy` and `destroy`, the schedule names are optional; leave them out to act on every schedule.
+
+Each Meltano environment deploys its own job for each schedule. The job name is the schedule name and the environment name, for example `meltano-daily-sync-prod` for the schedule `meltano-daily-sync` in `prod`. Choose the environment with `--environment`, for example `meltano --environment prod invoke pdt-aws logs meltano-daily-sync`. Without `--environment`, the command uses `default_environment` from `meltano.yml`. pdt's own output and hints name the job, for example `pdt logs meltano-daily-sync-prod`. Type the schedule name in its place, or the job name, which pdt-meltano also accepts.
 
 
 | Command                                | What it does                                            |
@@ -58,14 +60,14 @@ Commands take schedule names, the same names that `meltano schedule list` shows.
 | `<pdt-command>...`                     | run any other pdt command, such as `list` or `validate` |
 | `--help`                               | list all pdt commands                                   |
 | `describe [--format <format>]`         | list the commands of pdt-meltano                        |
-| `initialize`                           | does nothing, because deploy writes what it needs       |
+| `initialize`                           | write a starter shared `pdt.yml` if none exists         |
 
 
 `--yes` skips the question that `deploy` and `destroy` ask before they change anything in the cloud. The `<format>` of `describe` is `text`, `json`, or `yaml`.
 
 ## Config
 
-pdt-meltano writes a pdt project into `.meltano/run/pdt-aws/`, the run folder Meltano gives the plugin, each time you run a command. Set them with Meltano, not in `pdt.yml`. Every setting you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
+pdt-meltano writes a pdt project for the active Meltano environment into `.meltano/utilities/pdt-aws/pdt/<environment>/<project>/` each time you run a command, where `<project>` is the name of your Meltano project folder. pdt names the project with that folder name in its events and alert messages, and the image keeps the project in `/srv/<project>`, so a deployed run shows the same name. `meltano install` keeps this folder, so the list of deployed schedules and the values pdt saves on your first deploy stay. Set the plugin settings with Meltano, not in `pdt.yml`. Each setting in the table below that you set with `meltano config set pdt-aws <setting> <value>` goes under `platform:` in `pdt.yml` with the same name. pdt-meltano puts no other setting under `platform:`, so an env var such as `PDT_AWS_OTHER` in your shell does not change it. Run `meltano invoke pdt-aws validate` to see a problem before you deploy.
 
 These are the settings that pdt reads:
 
@@ -85,7 +87,28 @@ These are the settings that pdt reads:
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
-Settings that are the same for every cloud, such as `alerts:`, live in `pdt.yml` next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it.
+Settings that are the same for every cloud, such as `alerts:`, live in `orchestrate/pdt/pdt.yml`. Every pdt plugin of the project reads this file. Commit it. The `config_dir` setting names its folder, and the default is `$MELTANO_PROJECT_ROOT/orchestrate/pdt`. `config_dir` does not go under `platform:`.
+
+`meltano invoke pdt-aws initialize` writes a starter file with a commented `alerts:` example. It does not replace a file that exists. `meltano invoke pdt-aws alerts setup` writes `alerts:` into the file and keeps your comments. It makes the folder and the file first if they do not exist. pdt-meltano then moves the webhook from `orchestrate/pdt/.env` to the `.env` of your project.
+
+Every Meltano environment uses the same folder. To give one environment its own file, set `config_dir` for that environment in `meltano.yml`. Each pdt plugin has its own `config_dir` setting, so the override names each plugin:
+
+```yaml
+environments:
+- name: dev            # no entry: every pdt plugin reads orchestrate/pdt/pdt.yml
+- name: prod
+  config:
+    plugins:
+      utilities:
+      - name: pdt-aws
+        config:
+          config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod
+      - name: pdt-azure
+        config:
+          config_dir: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod
+```
+
+An `env:` entry for the environment, such as `PDT_AWS_CONFIG_DIR: $MELTANO_PROJECT_ROOT/orchestrate/pdt-prod`, also changes `config_dir`, for that one plugin.
 
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
@@ -93,9 +116,11 @@ If you remove a schedule that is still deployed, its cloud job keeps running. pd
 
 ## Working with your team
 
-pdt-meltano treats each schedule in meltano.yml as an app. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `meltano-daily-sync` from your own copy, you both update the same job.
+pdt-meltano deploys each schedule in meltano.yml once for each Meltano environment, as the job `<schedule>-<environment>`. A cloned meltano project that uses pdt-meltano manages the same jobs. This is intended: when you and a teammate each deploy `meltano-daily-sync` in `prod` from your own copy, you both update the job `meltano-daily-sync-prod`. A deploy in `dev` updates `meltano-daily-sync-dev` and leaves the `prod` job and its extractor state alone.
 
-Two different Meltano projects that deploy to the same cloud account must not use the same schedule name. If they do, each deploy replaces the other project's job.
+Two different Meltano projects that deploy to the same cloud account must not use the same schedule name in the same environment. If they do, each deploy replaces the other project's job.
+
+An `apps:` entry in the shared `pdt.yml` names the job, for example `meltano-daily-sync-prod`, so it can set alerts for one environment.
 
 ## Install from GitHub
 
