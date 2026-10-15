@@ -85,6 +85,8 @@ These are the settings that pdt reads:
 
 Secrets come from your project's `.env`, as described in [Deploy your first schedule](#deploy-your-first-schedule).
 
+Settings that are the same for every cloud, such as `alerts:`, live in `pdt.yml` next to `meltano.yml`. Commit this file. Every pdt plugin of the project reads it.
+
 pdt-meltano reads your schedules from `meltano.yml` each time you run a command, so there is nothing to sync. Change a schedule's interval or job, then run `deploy` to send the change to the cloud.
 
 If you remove a schedule that is still deployed, its cloud job keeps running. pdt-meltano reminds you on each command until you run `destroy <schedule-name>`.
@@ -122,11 +124,11 @@ meltano install utility pdt-aws
 For another cloud, change `name`, `namespace`, and the two setting values to the ones in the matching file in `hub/`:
 
 
-| `name`       | `namespace`  | `provider`     | `region`      |
-| ------------ | ------------ | -------------- | ------------- |
-| `pdt-aws`    | `pdt_aws`    | `aws`          | `us-east-1`   |
-| `pdt-azure`  | `pdt_azure`  | `azure`        | `eastus2`     |
-| `pdt-gcloud` | `pdt_gcloud` | `google-cloud` | `us-central1` |
+| `name`       | `namespace`  | `provider` | `region`      |
+| ------------ | ------------ | ---------- | ------------- |
+| `pdt-aws`    | `pdt_aws`    | `aws`      | `us-east-1`   |
+| `pdt-azure`  | `pdt_azure`  | `azure`    | `eastus2`     |
+| `pdt-gcloud` | `pdt_gcloud` | `gcloud`   | `us-central1` |
 
 
 To use a local copy of this repo instead, set `pip_url` to `-e /path/to/pdt-meltano`.

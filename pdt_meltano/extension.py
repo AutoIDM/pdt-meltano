@@ -17,6 +17,12 @@ pushes it after, under pdt's storage lock.
 Every setting of the plugin goes under platform: in pdt.yml, so pdt
 checks it. The provider comes from the Meltano Hub entry the user added (a
 default setting value); the user sets the others with `meltano config`.
+
+Every other key of pdt.yml, such as alerts:, is the same for each cloud, so it
+lives in pdt.yml in the Meltano project, which every pdt plugin of the
+project reads. When pdt writes such a key into the run folder's pdt.yml, or
+a value into the run folder's .env, pdt-meltano moves it to pdt.yml or .env
+in the Meltano project after pdt exits.
 """
 
 from __future__ import annotations
@@ -33,16 +39,22 @@ import time
 from pathlib import Path
 
 import yaml
-from dotenv import dotenv_values
+from dotenv import dotenv_values, set_key
 from meltano.edk import models
 from meltano.edk.extension import DescribeFormat, ExtensionBase
+from pdt.deploy_common import BASE_IMAGE
 
 # The provider setting of each Hub entry, and the pdt provider it names.
 PROVIDERS = {"aws": "aws", "azure": "azure", "gcloud": "google-cloud"}
 LEFT_OUT = (".meltano", ".git", ".env", ".env.*", ".venv", "venv", "__pycache__",
-            "output", ".pdt", ".pdt-state")
+            "output", ".pdt", "pdt.yml")
 # pdt saves these into pdt.yml on the first deploy.
 WRITTEN_BACK = ("account", "profile", "project", "subscription")
+# pdt saves these into an app's config.yml with `pdt pause` and when deploy --all disables an app.
+APP_WRITTEN_BACK = ("enabled", "pause")
+# The first line of the run folder's pdt.yml before it took keys from the
+# Meltano project's pdt.yml. Such a folder can hold keys pdt wrote, so they move once.
+LEGACY_HEADER = "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
 SHORTHAND = {"@hourly": "hourly", "@daily": "daily", "@weekly": "weekly",
              "@monthly": "monthly", "@yearly": "yearly"}
 
@@ -56,7 +68,6 @@ RUN_PY = '''\
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from pdt.config import load_env_json
 from pdt.utils import storage
@@ -71,26 +82,21 @@ def main() -> int:
         return subprocess.run(
             ["meltano", "--environment", ENVIRONMENT, "install", "--schedule", SCHEDULE]).returncode
     load_env_json()
-    store = storage.store()
-    state = Path(".pdt-state").resolve()
-    lease = store.pull("state/", state)
-    env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{state / 'meltano.db'}}")
-    code = subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
-    store.push(state, "state/", lease)
-    return code
+    with storage.sync(push_state_on_error=True) as run:
+        env = dict(os.environ, MELTANO_DATABASE_URI=f"sqlite:///{{run.state / 'meltano.db'}}")
+        return subprocess.run(["meltano", "--environment", ENVIRONMENT, "run", *JOB], env=env).returncode
 
 
 if __name__ == "__main__":
     sys.exit(main())
 '''
 
-DOCKERFILE = """\
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+DOCKERFILE = f"FROM {BASE_IMAGE}\n" + """\
 RUN apt-get update && apt-get install -y --no-install-recommends git \\
     && rm -rf /var/lib/apt/lists/*
 COPY . /workspace
 WORKDIR /workspace/{app}
-ENV PDT_PROJECT=/workspace NO_COLOR=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
+ENV PDT_PROJECT=/workspace NO_COLOR=1 PYTHONUNBUFFERED=1 MELTANO_SEND_ANONYMOUS_USAGE_STATS=false
 RUN uv sync --script run.py && uv run --script run.py install
 ENTRYPOINT ["sh", "-c", "uv run --script run.py; code=$?; echo \\"pdt: exit $code\\"; exit $code"]
 """
@@ -120,6 +126,10 @@ def log(level: str, message: str) -> None:
             print(message, flush=True)
             return
     print(message, file=sys.stderr, flush=True)
+
+
+def load_yaml(path: Path) -> dict:
+    return (yaml.safe_load(path.read_text()) if path.is_file() else None) or {}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -205,16 +215,21 @@ class Pdt(ExtensionBase):
                 "which sets it for you.")
         self.stage.mkdir(parents=True, exist_ok=True)
         project_file = self.stage / "pdt.yml"
-        existing = yaml.safe_load(project_file.read_text()) if project_file.is_file() else {}
-        platform = (existing or {}).get("platform") or {}
+        if project_file.is_file() and project_file.read_text().startswith(LEGACY_HEADER):
+            self.keep_written()
+        existing = load_yaml(project_file)
+        platform = existing.get("platform") or {}
         if platform.get("provider") != provider:
             platform = {}
         platform = {**{key: platform[key] for key in WRITTEN_BACK if key in platform},
                     **self.settings, "provider": provider}
+        shared = {key: value for key, value in load_yaml(self.root / "pdt.yml").items()
+                  if key != "platform"}
         project_file.write_text(
-            "# Written by pdt-meltano from the plugin settings in meltano.yml. Changes here\n"
-            "# are kept only for keys pdt writes back, such as the cloud account.\n"
-            + yaml.safe_dump({"platform": platform}, sort_keys=False))
+            "# Written by pdt-meltano from the plugin settings in meltano.yml and from\n"
+            "# pdt.yml in the Meltano project. pdt-meltano moves what pdt writes here to\n"
+            "# those files.\n"
+            + yaml.safe_dump({"platform": platform, **shared}, sort_keys=False))
         env_names = sorted(dotenv_values(self.root / ".env")) if (self.root / ".env").is_file() else []
         versions = {"pdt": importlib.metadata.version("pdt-cli"),
                     "meltano": meltano("--version", cwd=self.root).split()[-1]}
@@ -222,14 +237,17 @@ class Pdt(ExtensionBase):
         for schedule in schedules:
             name = app_name(schedule.name)
             folder = self.stage / name
+            config = folder / "config.yml"
+            own = load_yaml(config)
+            kept = {key: own[key] for key in APP_WRITTEN_BACK if key in own}
             shutil.rmtree(folder, ignore_errors=True)
             shutil.copytree(self.root, folder, ignore=shutil.ignore_patterns(*self.left_out),
                             symlinks=True)
             (folder / "run.py").write_text(RUN_PY.format(
                 schedule=schedule.name, job=schedule.job, environment=self.environment, **versions))
             (folder / "Dockerfile").write_text(DOCKERFILE.format(app=name))
-            (folder / "config.yml").write_text(yaml.safe_dump(
-                {"schedule": schedule.cron, "env": {"optional": env_names}}, sort_keys=False))
+            config.write_text(yaml.safe_dump(
+                {"schedule": schedule.cron, "env": {"optional": env_names}, **kept}, sort_keys=False))
             names.append(name)
         deployed = self.deployed()
         for folder in self.stage.iterdir():
@@ -244,6 +262,27 @@ class Pdt(ExtensionBase):
                 shutil.rmtree(folder)
         return names
 
+    def keep_written(self) -> None:
+        """Move what pdt wrote into the run folder to the Meltano project: each key
+        of pdt.yml other than platform: that differs from the project's pdt.yml,
+        and each value in .env. Every pdt plugin of the project then reads them."""
+        root_file = self.root / "pdt.yml"
+        shared = load_yaml(root_file)
+        written = {key: value for key, value in load_yaml(self.stage / "pdt.yml").items()
+                   if key != "platform" and shared.get(key) != value}
+        if written:
+            root_file.write_text(yaml.safe_dump({**shared, **written}, sort_keys=False))
+            log("info", f"saved {', '.join(written)} in pdt.yml in the Meltano project")
+        env_file = self.stage / ".env"
+        values = {key: value for key, value in dotenv_values(env_file).items()
+                  if value is not None} if env_file.is_file() else {}
+        if values:
+            (self.root / ".env").touch(mode=0o600)
+            for key, value in values.items():
+                set_key(self.root / ".env", key, value, quote_mode="never")
+            log("info", f"saved {', '.join(values)} in .env in the Meltano project")
+        env_file.unlink(missing_ok=True)
+
     def pdt(self, *args: str) -> int:
         env = {**os.environ, **{key: value for key, value in dotenv_values(self.root / ".env").items()
                                 if value is not None and key not in os.environ},
@@ -251,8 +290,11 @@ class Pdt(ExtensionBase):
         # Meltano shows a utility's stderr one line at a time, so a prompt with no
         # newline would not show. pdt's stderr goes to the terminal instead.
         stderr = sys.stdout if sys.stdout.isatty() else None
-        return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env,
-                              stderr=stderr).returncode
+        try:
+            return subprocess.run([sys.executable, "-m", "pdt.cli", *args], env=env,
+                                  stderr=stderr).returncode
+        finally:
+            self.keep_written()
 
     def each(self, command: str, names: list[str], extra: tuple[str, ...] = ()) -> int:
         """Run a pdt command on the named schedules, or on every one.
