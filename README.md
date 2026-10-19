@@ -131,7 +131,7 @@ plugins:
   utilities:
   - name: pdt-aws
     namespace: pdt_aws
-    pip_url: git+https://github.com/AutoIDM/pdt-meltano.git
+    pip_url: git+https://github.com/AutoIDM/pdt-meltano.git@v0.1.1
     executable: pdt_meltano
     settings:
     - name: provider

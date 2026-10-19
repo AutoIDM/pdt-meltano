@@ -1,6 +1,6 @@
 [project]
 name = "pdt-meltano"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deploy a Meltano project to AWS Batch, Azure Container Apps Jobs, or Google Cloud Run with pdt."
 readme = "README.md"
 requires-python = ">=3.12"

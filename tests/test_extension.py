@@ -444,6 +444,12 @@ def test_describe_text_names_the_commands(meltano_project):
     assert "- deploy" in Pdt().describe_formatted()
 
 
+def test_describe_marks_the_pdt_commands_as_pass_through(meltano_project):
+    commands = yaml.safe_load(Pdt().describe_formatted())["commands"]
+    assert [(c["name"], c["commands"], c["pass_through_cli"]) for c in commands] == [
+        ("pdt_meltano", ["deploy", "destroy", "describe", "initialize"], False), ("pdt_meltano", [":splat"], True)]
+
+
 def test_deploy_needs_an_environment(meltano_project, monkeypatch):
     monkeypatch.setenv("MELTANO_ENVIRONMENT", "")
     with pytest.raises(PdtMeltanoError, match="no Meltano environment is active"):

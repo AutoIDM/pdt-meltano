@@ -35,7 +35,7 @@ next_steps: |-
   1. Add a job schedule if you have none: `meltano schedule add <name> --job <job> --interval '@daily'`.
   2. Deploy it: `meltano invoke pdt-gcloud:deploy`. The first deploy asks you to sign in to your cloud account. It builds the image with Docker on this computer when Docker works, else in the cloud.
   3. When a schedule has no successful run yet, deploy asks `Start a run now and show its log? [y/N]`. A run loads data. Press Enter to skip it.
-pip_url: git+https://github.com/AutoIDM/pdt-meltano.git@v0.1.0
+pip_url: git+https://github.com/AutoIDM/pdt-meltano.git@v0.1.1
 prereq: |-
   A Google Cloud project. The first deploy asks you to sign in to it.
 repo: https://github.com/AutoIDM/pdt
