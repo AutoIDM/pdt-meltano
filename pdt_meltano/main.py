@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from typing import List, Optional
 
@@ -55,6 +56,12 @@ def main() -> None:
     usage and error text as the user typed it: `meltano invoke pdt-aws`."""
     args = sys.argv[1:]
     own = {command.name or command.callback.__name__ for command in app.registered_commands}
+    if "MELTANO_PROJECT_ROOT" not in os.environ:
+        if args in (["-h"], ["--help"], ["--version"]):
+            sys.exit(subprocess.run([sys.executable, "-m", "pdt.cli", *args]).returncode)
+        if args and not (args[0] in own and args[1:] and set(args[1:]) <= {"-h", "--help"}):
+            log("error", "pdt_meltano runs only through Meltano, for example `meltano invoke pdt-aws deploy`")
+            sys.exit(1)
     if args[:1] == ["--version"] or ({"-h", "--help"} & set(args) and args[0] not in own):
         sys.exit(Pdt().pdt(*args))
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in own:

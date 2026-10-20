@@ -385,6 +385,7 @@ def test_every_command_needs_an_environment(meltano_project, monkeypatch):
 
 
 def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
+    monkeypatch.setenv("MELTANO_PROJECT_ROOT", "/project")
     sent = []
     monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
     monkeypatch.setattr(main.Pdt, "invoke", lambda self, *args: sent.append(args) or sys.exit(0))
@@ -395,6 +396,7 @@ def test_a_command_that_is_not_ours_goes_to_pdt(monkeypatch):
 
 
 def test_help_comes_from_pdt(monkeypatch):
+    monkeypatch.setenv("MELTANO_PROJECT_ROOT", "/project")
     sent = []
     monkeypatch.setattr(main.Pdt, "__init__", lambda self: None)
     monkeypatch.setattr(main.Pdt, "pdt", lambda self, *args: sent.append(args) or 0)
@@ -403,6 +405,21 @@ def test_help_comes_from_pdt(monkeypatch):
         with pytest.raises(SystemExit):
             main.main()
     assert sent == [("--help",), ("-h",), ("runs", "daily-sync", "-h"), ("--version",)]
+
+
+def test_outside_meltano_help_runs_pdt_and_other_commands_fail(monkeypatch, capsys):
+    monkeypatch.delenv("MELTANO_PROJECT_ROOT", raising=False)
+    monkeypatch.setattr(main.Pdt, "__init__", lambda self: pytest.fail("needs Meltano"))
+    runs = []
+    monkeypatch.setattr(main.subprocess, "run", lambda cmd: runs.append(cmd[3:]) or SimpleNamespace(returncode=3))
+    for argv, code in ((["--help"], 3), (["--version"], 3), (["deploy"], 1), (["list"], 1), (["runs", "-h"], 1),
+                       (["storage", "x", "destroy", "--yes", "--help"], 1), (["deploy", "--", "--help"], 1)):
+        monkeypatch.setattr(sys, "argv", ["pdt_meltano", *argv])
+        with pytest.raises(SystemExit) as exit:
+            main.main()
+        assert exit.value.code == code, argv
+    assert runs == [["--help"], ["--version"]]
+    assert "runs only through Meltano" in capsys.readouterr().err
 
 
 def test_help_for_our_commands_is_ours(monkeypatch, capsys):
