@@ -239,9 +239,11 @@ class Pdt(ExtensionBase):
                       / folder_name(self.environment) / self.root.name)
 
     def describe(self) -> models.Describe:
-        return models.Describe(commands=[models.ExtensionCommand(
-            name="pdt_meltano", description="deploy Meltano schedules with pdt",
-            commands=["deploy", "destroy", "describe", "initialize"])])
+        return models.Describe(commands=[
+            models.ExtensionCommand(name="pdt_meltano", description="deploy Meltano schedules with pdt",
+                                    commands=["deploy", "destroy", "describe", "initialize"]),
+            models.InvokerCommand(name="pdt_meltano",
+                                  description="send any other command, such as list, validate, or run, to pdt")])
 
     def describe_formatted(self, output_format: DescribeFormat = DescribeFormat.text) -> str:
         # The EDK prints text with devtools, which shows no fields of the EDK's slots dataclasses.
